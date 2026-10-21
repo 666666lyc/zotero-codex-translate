@@ -1,0 +1,29 @@
+# dot files
+.DS_Store
+.claude
+.cursor
+
+# Node.js
+node_modules
+pnpm-lock.yaml
+yarn.lock
+
+# TSC
+tsconfig.tsbuildinfo
+
+# Scaffold
+.env
+.scaffold
+build
+logs
+
+
+/tmp/
+/dist/
+.venv/
+.build-venv/
+__pycache__/
+*.pyc
+*.egg-info/
+bridge/build/
+bridge/dist/

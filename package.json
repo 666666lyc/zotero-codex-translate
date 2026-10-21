@@ -1,0 +1,59 @@
+{
+  "name": "zotero-codex-translate",
+  "type": "module",
+  "version": "0.2.0",
+  "description": "Translate academic PDFs through local Codex and read originals and Chinese translations side by side",
+  "config": {
+    "addonName": "Codex 文献翻译",
+    "addonID": "codex-translate@zotero.local",
+    "addonRef": "zotero-codex-translate",
+    "addonInstance": "ZoteroCodexTranslate",
+    "prefsPrefix": "extensions.zotero.zotero-codex-translate"
+  },
+  "author": "Zotero Codex Translate contributors",
+  "license": "AGPL-3.0-only",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "typecheck": "tsc --noEmit",
+    "test:bridge": "python scripts/test_bridge.py",
+    "package:bridge": "python scripts/package_bridge.py"
+  },
+  "dependencies": {
+    "zotero-plugin-toolkit": "^5.1.0-beta.13"
+  },
+  "devDependencies": {
+    "@types/chai": "^5.2.3",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^24.10.0",
+    "@zotero-plugin/eslint-config": "^0.6.7",
+    "chai": "^6.2.1",
+    "eslint": "^9.39.2",
+    "mocha": "^11.7.5",
+    "prettier": "^3.7.4",
+    "typescript": "^5.9.3",
+    "zotero-plugin-scaffold": "^0.8.2",
+    "zotero-types": "^4.1.0-beta.4",
+    "esbuild": "0.25.12"
+  },
+  "prettier": {
+    "printWidth": 80,
+    "tabWidth": 2,
+    "endOfLine": "lf",
+    "overrides": [
+      {
+        "files": [
+          "*.xhtml"
+        ],
+        "options": {
+          "htmlWhitespaceSensitivity": "css"
+        }
+      }
+    ]
+  },
+  "homepage": "https://github.com/666666lyc/zotero-codex-translate/tree/v0.2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/666666lyc/zotero-codex-translate.git"
+  }
+}

@@ -1,0 +1,138 @@
+<linkset>
+  <html:link rel="localization" href="__addonRef__-preferences.ftl" />
+  <html:style>
+    .svr-section-title { margin: 20px 0 8px 0; } .svr-setting-row { margin: 0; }
+    .svr-setting-desc { font-size: 0.9em; opacity: 0.7; margin: 2px 0 8px 0; }
+    .svr-inline-label { margin-right: 8px; }
+  </html:style>
+</linkset>
+<groupbox
+  onload="Zotero.__addonInstance__.hooks.onPrefsEvent('load', { window })"
+>
+  <!-- Basic Settings -->
+  <label>
+    <html:h2
+      data-l10n-id="pref-section-basic"
+      class="svr-section-title"
+    ></html:h2>
+  </label>
+  <checkbox
+    id="zotero-prefpane-__addonRef__-follow-focus"
+    preference="followFocusPrimary"
+    data-l10n-id="pref-follow-focus"
+    class="svr-setting-row"
+  />
+  <description data-l10n-id="pref-follow-focus-desc" class="svr-setting-desc" />
+  <hbox align="center" class="svr-setting-row">
+    <html:label
+      data-l10n-id="pref-split-tabs-title"
+      class="svr-inline-label"
+    ></html:label>
+    <menulist
+      id="zotero-prefpane-__addonRef__-split-tabs-title"
+      preference="splitTabsTitle"
+      native="true"
+    >
+      <menupopup>
+        <menuitem
+          value="titleCreatorYear"
+          data-l10n-id="pref-split-tabs-title-title-creator-year"
+        />
+        <menuitem
+          value="creatorYearTitle"
+          data-l10n-id="pref-split-tabs-title-creator-year-title"
+        />
+        <menuitem
+          value="attachmentTitle"
+          data-l10n-id="pref-split-tabs-title-attachment-title"
+        />
+        <menuitem
+          value="filename"
+          data-l10n-id="pref-split-tabs-title-filename"
+        />
+      </menupopup>
+    </menulist>
+  </hbox>
+  <description
+    data-l10n-id="pref-split-tabs-title-desc"
+    class="svr-setting-desc"
+  />
+</groupbox>
+
+<groupbox>
+  <!-- Appearance Settings -->
+  <label>
+    <html:h2
+      data-l10n-id="pref-section-appearance"
+      style="margin: 20px 0 0px 0"
+    ></html:h2>
+  </label>
+  <hbox align="center" style="margin-top: 0">
+    <html:label
+      data-l10n-id="pref-scrollbar-color"
+      style="margin-right: 8px"
+    ></html:label>
+    <html:span style="margin-right: 4px">R</html:span>
+    <html:input
+      type="number"
+      id="zotero-prefpane-__addonRef__-scrollbar-r"
+      min="0"
+      max="255"
+      preference="primaryScrollbarR"
+      style="width: 60px; margin-right: 8px"
+    />
+    <html:span style="margin-right: 4px">G</html:span>
+    <html:input
+      type="number"
+      id="zotero-prefpane-__addonRef__-scrollbar-g"
+      min="0"
+      max="255"
+      preference="primaryScrollbarG"
+      style="width: 60px; margin-right: 8px"
+    />
+    <html:span style="margin-right: 4px">B</html:span>
+    <html:input
+      type="number"
+      id="zotero-prefpane-__addonRef__-scrollbar-b"
+      min="0"
+      max="255"
+      preference="primaryScrollbarB"
+      style="width: 60px; margin-right: 8px"
+    />
+    <html:div
+      id="zotero-prefpane-__addonRef__-color-preview"
+      style="
+        width: 20px;
+        height: 20px;
+        border: 1px solid #ccc;
+        border-radius: 5px;
+        margin-left: 4px;
+      "
+    />
+  </hbox>
+  <description
+    data-l10n-id="pref-scrollbar-color-desc"
+    style="font-size: 0.9em; opacity: 0.7; margin: 2px 0 8px 0"
+  />
+</groupbox>
+
+<groupbox>
+  <!-- About -->
+  <label>
+    <html:h2
+      data-l10n-id="pref-section-about"
+      style="margin: 20px 0 8px 0"
+    ></html:h2>
+  </label>
+  <description data-l10n-id="pref-about-desc" style="margin: 0 0 8px 0" />
+  <html:a
+    href="https://github.com/zerolfl/zotero-split-view-reader"
+    style="text-decoration: none; cursor: pointer"
+    onclick="
+      Zotero.launchURL(this.href);
+      event.preventDefault();
+    "
+    >分屏组件来源：Split-View Reader</html:a
+  >
+</groupbox>
+<groupbox><label><html:h2>Codex 翻译连接</html:h2></label><description>设置桥接程序、Codex 路径、模型和离线资源。</description><button label="打开连接设置" oncommand="Zotero.__addonInstance__.hooks.onPrefsEvent('translation', {})" /></groupbox>

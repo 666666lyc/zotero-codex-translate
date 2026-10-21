@@ -1,0 +1,5 @@
+BabelDOC==0.6.4
+bitstring>=4.3,<5
+peewee>=3.17.8,<4
+pymupdf>=1.26.7,<2
+opencv-python-headless>=4.10,<5

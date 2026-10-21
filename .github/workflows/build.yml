@@ -1,0 +1,58 @@
+name: Build and verify upstream installer
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  protocol:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-22.04, macos-14, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: npm ci --ignore-scripts
+      - run: python -m pip --isolated install --index-url https://pypi.org/simple pymupdf==1.28.2 psutil==7.2.2
+      - run: npm run build
+      - run: npm test
+      - run: python scripts/test_bridge.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: source-check-${{ matrix.os }}
+          path: |
+            dist/*.xpi
+            dist/*.sha256
+  windows-upstream:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+      # The invoking Python is only a harness; uv downloads a private Python.
+      - run: python scripts/runtime_smoke.py --root "tmp/ci cold/中文 data/codex-translate/runtime"
+      - name: Reuse and validate the managed environment
+        run: python scripts/runtime_smoke.py --root "tmp/ci cold/中文 data/codex-translate/runtime"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-upstream-report
+          path: |
+            tmp/**/runtime-report.json
+            tmp/**/state.json

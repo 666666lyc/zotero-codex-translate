@@ -1,0 +1,20 @@
+:root { color-scheme: light dark; font: 14px system-ui, sans-serif; }
+body { margin: 24px; max-width: 900px; line-height: 1.5; }
+h1 { font-size: 22px; margin: 0 0 8px; }
+label { display: block; margin: 12px 0 4px; font-weight: 600; }
+input, select, button { font: inherit; padding: 7px 10px; border: 1px solid #8888; border-radius: 5px; box-sizing: border-box; }
+select { width: 100%; }
+input { flex: 1; min-width: 0; }
+button { cursor: pointer; }
+button:disabled { opacity: .5; cursor: default; }
+button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid #377db8; outline-offset: 2px; }
+.primary { background: #175f9b; color: white; border-color: #175f9b; }
+.path, .actions { display: flex; gap: 8px; margin: 10px 0; flex-wrap: wrap; }
+.path { flex-wrap: nowrap; }
+.hint { font-size: 12px; opacity: .75; }
+details { border: 1px solid #8885; border-radius: 8px; padding: 12px; margin: 16px 0; }
+summary { cursor: pointer; font-weight: 600; }
+section { margin-top: 18px; }
+progress { width: 100%; height: 14px; margin-top: 18px; }
+#message { white-space: pre-wrap; border-left: 3px solid #377db8; padding-left: 12px; overflow-wrap: anywhere; }
+#document-title { overflow-wrap: anywhere; }

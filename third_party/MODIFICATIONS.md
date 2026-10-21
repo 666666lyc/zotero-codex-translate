@@ -1,0 +1,11 @@
+# Modifications and licensing boundaries
+
+Modified on 2026-10-20 and 2026-10-21 by Zotero Codex Translate contributors.
+
+- Split-View Reader, commit `600f1bd99d9a52a99683702f6681bf34b83bfec3`, Fuling Lin and contributors: new plugin identity and menu/settings workflow; translation-pair opening; namespace isolation; corresponding-page synchronization; integration lifecycle fixes. Its original AGPL-3.0-or-later grant is preserved, including `notices/split-view-LICENSE.txt` and package metadata. The project exercises the version 3 option for this combined distribution. New bridge/installer code is AGPL-3.0-only; this does not remove the upstream grant.
+- Upstream plugin template/toolkit and Zotero bootstrap notices remain in source. The bundled toolkit is windingwind's MIT-licensed zotero-plugin-toolkit 5.1.0-beta.13; its complete license is retained.
+- Material Symbols SVGs copied through Split-View Reader retain Google's Apache-2.0 license. `do_not_splitscreen_vertical_24dp.svg` includes an added slash/opacity change from upstream. The `svreader.svg` logo is retained from the pinned Split-View Reader tree under its project license.
+- BabelDOC 0.6.4 is downloaded unmodified. `pdf_engine.py` adapts its APIs at runtime for Codex paragraph translation, reference preservation, strict placeholder/typesetting validation and dedicated asset storage. No fork of BabelDOC is represented as upstream. Its source archive and nested notices are preserved.
+- Font and ONNX binaries are downloaded byte-for-byte from the pinned resource manifest, checked against BabelDOC 0.6.4 hashes. This project does not modify, rename or relicense those binaries. Font metadata copyright and reserved names are recorded in `runtime/font-provenance.json`; fonts retain OFL-1.1. Documents produced using fonts are governed separately from the font software.
+
+No upstream author or vendor endorses this project. Codex CLI is a separately installed prerequisite, not distributed in the XPI. Runtime tools and wheels are fetched directly from their upstreams; that distribution boundary does not waive their license terms. See `runtime/dependency-inventory.json` and the original notices for actual component terms.
