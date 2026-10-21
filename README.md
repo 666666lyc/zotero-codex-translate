@@ -2,14 +2,14 @@
 
 在 Zotero 9 中调用本机 Codex，把英文文本 PDF 翻译为中文附件，并在同一标签页左右对照阅读。
 
-**0.2.0 开发预览，自动安装首轮仅 Windows x64。** macOS/Linux 的构建与协议测试预留，尚未开放自动安装。扫描件 OCR、批量翻译和图片内文字翻译不在首版范围。实测范围与未完成项见 [验证矩阵](docs/VALIDATION.md)。
+**0.1.0 开发预览，支持 Windows x64 / Zotero 9。** 适用于单篇有文本层的英文 PDF。扫描件 OCR、批量翻译和图片内文字翻译不在首版范围。测试记录见 [验证矩阵](docs/VALIDATION.md)。
 
 项目仓库：https://github.com/666666lyc/zotero-codex-translate
 
 ## 安装与使用
 
 1. 安装 Zotero 9 和 [Codex CLI](https://github.com/openai/codex)，在终端运行 `codex login`，选择 ChatGPT 登录。插件不读取或储存登录令牌。
-2. 在 Zotero“工具 → 插件”中从文件安装 `zotero-codex-translate-0.2.0.xpi`。
+2. 在 Zotero“工具 → 插件”中从文件安装 `zotero-codex-translate-0.1.0.xpi`。
 3. 插件初始化后自动准备环境。通过“工具 → Codex 文献翻译：连接设置”查看阶段、取消、继续或检查与修复。无需安装 Python、uv、解压软件或填写桥接路径。
 4. 环境就绪后点击“检测登录与模型”。找不到系统 CLI 时填写完整路径；模型列表来自当前 Codex，留空使用其默认模型。
 5. 选中文献或 PDF，右键“使用 Codex 翻译全文”。完成后自动导入“中文译文”附件，选择单独打开或中英对照。

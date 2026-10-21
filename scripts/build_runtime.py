@@ -30,6 +30,10 @@ def main():
     writer.writerow([f"{dist_info}/RECORD", "", ""])
     files[f"{dist_info}/RECORD"] = record.getvalue().encode()
     wheel = f"zotero_codex_bridge-{version}-py3-none-any.whl"
+    # A version change must not leave an obsolete bridge wheel inside the XPI.
+    for previous in destination.glob("zotero_codex_bridge-*-py3-none-any.whl"):
+        if previous.name != wheel:
+            previous.unlink()
     with zipfile.ZipFile(destination / wheel, "w", zipfile.ZIP_DEFLATED) as z:
         for name, data in sorted(files.items()):
             info = zipfile.ZipInfo(name, (2026, 1, 1, 0, 0, 0))

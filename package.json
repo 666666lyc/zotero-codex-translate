@@ -1,7 +1,7 @@
 {
   "name": "zotero-codex-translate",
   "type": "module",
-  "version": "0.2.0",
+  "version": "0.1.0",
   "description": "Translate academic PDFs through local Codex and read originals and Chinese translations side by side",
   "config": {
     "addonName": "Codex 文献翻译",
@@ -51,7 +51,7 @@
       }
     ]
   },
-  "homepage": "https://github.com/666666lyc/zotero-codex-translate/tree/v0.2.0",
+  "homepage": "https://github.com/666666lyc/zotero-codex-translate/tree/v0.1.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/666666lyc/zotero-codex-translate.git"
