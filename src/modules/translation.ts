@@ -5,8 +5,10 @@ import { SplitViewFactory } from "./splitView";
 import { runtime } from "./runtime";
 import { ReaderToolbarRegistry, styleReaderToolbar, toolbarButton, preserveToolbarClick } from "./readerToolbar";
 
-const RELATION = "dc:relation";
-const URN = "urn:zotero-codex:translation:";
+import { metadata, saveMetadata, candidates, savedPair, choosePair, initializePairing, loadPairingData } from "./pairing";
+let pairingObserver: string | undefined;
+let pairingRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+const pairingTabs = new Set<string>();
 const menuIDs: string[] = [];
 const dialogs = new Set<Window>();
 const imports = new Map<string, Promise<Zotero.Item>>();
@@ -37,31 +39,23 @@ function updateTaskButtons() {
   }
 }
 
-export function comparisonPair(item: Zotero.Item): { original: Zotero.Item; translated: Zotero.Item } | undefined {
-  const marker = association(item);
-  const original = marker ? Zotero.Items.getByLibraryAndKey(item.libraryID, marker.split(":")[0]) : item;
-  if (!original || original.deleted || !original.parentItemID || original.attachmentContentType !== "application/pdf") return;
-  if (marker) return { original, translated: item };
-  const parent = Zotero.Items.get(original.parentItemID as number);
-  const translated = parent?.getAttachments().map(id => Zotero.Items.get(id)).filter(a => !a.deleted && association(a)?.split(":")[0] === original.key)
-    .sort((a, b) => String(b.dateAdded || "").localeCompare(String(a.dateAdded || "")) || b.id-a.id)[0];
-  return translated ? { original, translated } : undefined;
-}
+export const comparisonPair = savedPair;
 function updateCompareButtons() {
   for (const [button, reader] of compareButtons) {
     try {
       if (button.ownerDocument?.defaultView?.closed) { compareButtons.delete(button); continue; }
       const item = Zotero.Items.get(reader.itemID);
       const pair = item && comparisonPair(item);
-      const busy = SplitViewFactory.comparisonOperations.status(reader.tabID);
+      const busy = pairingTabs.has(reader.tabID) ? "opening" : SplitViewFactory.comparisonOperations.status(reader.tabID);
       const active = SplitViewFactory.isComparison(reader.tabID);
-      button.disabled = !!busy || (!active && !pair);
+      const choices = item ? candidates(item).filter(a => !metadata(a)).length : 0;
+      button.disabled = !!busy || (!active && !pair && !choices);
       button.setAttribute("aria-pressed", String(active));
       button.setAttribute("aria-busy", String(!!busy));
       const label = busy === "opening" ? "正在打开…" : busy === "closing" ? "正在关闭…" : "中英对照";
       if (button.textContent !== label) button.textContent = label;
-      button.title = busy ? "正在切换中英对照" : active ? "退出中英对照，保留当前阅读位置" : pair ? "打开中英对照；双向连续同步，可切换独立浏览" : "尚无中文译文";
-    } catch { compareButtons.delete(button); }
+      button.title = busy ? "正在切换中英对照" : active ? "退出中英对照，保留当前阅读位置" : pair ? "打开中英对照；双向连续同步，可切换独立浏览" : choices ? "选择同一文献下的 PDF 开启对照" : "同一文献下没有可对照的 PDF";
+    } catch (error) { button.disabled = true; button.title = String(error); }
   }
 }
 function notice(text: string, jobId?: string) {
@@ -197,8 +191,8 @@ async function sourceFromSelection(readerItemID?: number): Promise<Zotero.Item> 
 }
 
 export function association(item: Zotero.Item): string | undefined {
-  const values = item.getRelations?.()[RELATION] || [];
-  return (Array.isArray(values) ? values : [values]).find((value: string) => value.startsWith(URN))?.slice(URN.length);
+  const record = metadata(item);
+  return record ? `${record.originalKey}:${record.fingerprint || ""}:${record.jobId || ""}` : undefined;
 }
 
 function findImported(source: Zotero.Item, job: Job): Zotero.Item | undefined {
@@ -217,7 +211,6 @@ async function importResult(source: Zotero.Item, job: Job): Promise<Zotero.Item>
 
 async function performImport(source: Zotero.Item, job: Job): Promise<Zotero.Item> {
   let translated = findImported(source, job);
-  const marker = `${URN}${source.key}:${job.fingerprint}:${job.id}`;
   if (!translated) {
     if (job.state === "imported" && job.outputItemKey) throw new Error("此前导入的译文已被移除，请使用“重新翻译为新版本”。");
     if (!job.result?.outputPath) throw new Error("任务没有可导入的 PDF。");
@@ -230,19 +223,8 @@ async function performImport(source: Zotero.Item, job: Job): Promise<Zotero.Item
     translated = await Zotero.Attachments.importFromFile({ file: job.result!.outputPath, libraryID: parent.libraryID, parentItemID: parent.id,
       fileBaseName: `codex-${job.id}.zh-CN`, title: `中文译文 · ${new Date(job.createdAt * 1000).toLocaleString()}` });
   }
-  // Repair the association when recovering from a crash after the attachment
-  // transaction but before its relation was saved.
-  if (association(translated!) !== marker.slice(URN.length)) {
-    translated!.addRelation(RELATION, marker);
-    await translated!.saveTx();
-  }
-  if (job.result?.sourcePageCount !== undefined) {
-    const pageRelation = `urn:zotero-codex:page-counts:${job.result.sourcePageCount}:${job.result.pageCount}`;
-    const relations = translated!.getRelations()[RELATION] || [];
-    if (!(Array.isArray(relations) ? relations : [relations]).includes(pageRelation)) {
-      translated!.addRelation(RELATION, pageRelation); await translated!.saveTx();
-    }
-  }
+  await saveMetadata(translated!, {version:1,originalKey:source.key,fingerprint:job.fingerprint,jobId:job.id,
+    ...(job.result?.sourcePageCount ? {sourcePageCount:job.result.sourcePageCount,pageCount:job.result.pageCount} : {})});
   await bridge.request("jobs.acknowledge", { jobId: job.id, outputItemKey: translated!.key });
   return translated!;
 }
@@ -378,11 +360,12 @@ class TranslationPanel {
   }
 
   async licenses() {
-    // Use Zotero's URI API explicitly: getContentsAsync returns an XHR rather
-    // than text for jar: resources in an installed XPI.
+    // Zotero 10's HTTP URI parser rejects jar: URLs. Read packaged local
+    // resources through a system-principal channel instead.
+    const { NetUtil } = ChromeUtils.importESModule("resource://gre/modules/NetUtil.sys.mjs") as any;
     const readText = async (name: string) => {
-      const response = await Zotero.HTTP.request("GET", rootURI + name, { responseType: "text" });
-      const text = response.responseText;
+      const channel = NetUtil.newChannel({ uri: rootURI + name, loadUsingSystemPrincipal: true });
+      const text = await Zotero.File.getContentsAsync(channel, "utf-8");
       if (typeof text !== "string") throw new Error(`无法读取插件许可文件：${name}`);
       return text;
     };
@@ -499,7 +482,6 @@ class TranslationPanel {
 
   async open(mode: "translated" | "compare") {
     if (!this.source || !this.selectedJob) throw new Error("请先选择已完成的任务。");
-    if (mode === "compare" && this.selectedJob.result?.comparisonAvailable === false) throw new Error("原文与译文页数不同，无法按页对应；请单独打开中文 PDF。");
     const translated = await importResult(this.source, this.selectedJob);
     if (!(await translated.getFilePathAsync())) throw new Error("中文附件不在本机，请先下载附件。");
     if (mode === "compare") await SplitViewFactory.openTranslationPair(this.source.id, translated.id);
@@ -525,8 +507,22 @@ export class TranslationFactory {
     this.diagnosis = entry;
     return entry.promise;
   }
-  static register() {
+  static async register() {
     stopping = false;
+    await initializePairing();
+    pairingObserver = Zotero.Notifier.registerObserver({notify:async () => {
+      // Notifiers can run while a new item is still being committed. Do not
+      // await item loads inside the notifier dispatch/transaction.
+      if (pairingRefreshTimer) clearTimeout(pairingRefreshTimer);
+      pairingRefreshTimer = setTimeout(() => {
+        pairingRefreshTimer = undefined;
+        if (stopping) return;
+        void (async () => {
+          await loadPairingData();
+          if (!stopping) updateCompareButtons();
+        })().catch(error=>Zotero.logError(error));
+      },100);
+    }},["item"],"codex-pairing");
     SplitViewFactory.comparisonOperations.listeners.add(updateCompareButtons);
     bridge.listeners.add(completedListener);
     const manager = (Zotero as any).MenuManager;
@@ -550,18 +546,8 @@ export class TranslationFactory {
         status.title = "查看全部翻译任务及历史失败记录";
         const created = { reader, group, compare, status, releaseClick: preserveToolbarClick(doc, group) };
         button.addEventListener("click", () => void this.startBackground(false, created.reader?.itemID).catch(this.error));
-        compare.addEventListener("click", async () => {
-          const current = created.reader;
-          if (compare.disabled || SplitViewFactory.comparisonOperations.status(current.tabID)) return;
-          try {
-            if (SplitViewFactory.isComparison(current.tabID)) await SplitViewFactory.closeComparison(current.tabID);
-            else {
-              const pair = comparisonPair(Zotero.Items.get(current.itemID));
-              if (!pair) throw new Error("尚无中文译文，或关联原文已被移除。");
-              // openTranslationPair establishes the tab guard before any asynchronous IO.
-              await SplitViewFactory.openTranslationPair(pair.original.id, pair.translated.id, current);
-            }
-          } catch (error) { this.error(error as Error); }
+        compare.addEventListener("click", () => {
+          if (!compare.disabled) void this.openComparison(created.reader).catch(this.error);
         });
         status.addEventListener("click", () => void this.openTasks().catch(this.error));
         group.append(button, compare, status);
@@ -573,6 +559,20 @@ export class TranslationFactory {
       append(entry.group);
       updateTaskButtons();
     }, config.addonID);
+  }
+
+  static async openComparison(current: any) {
+    if (pairingTabs.has(current.tabID) || SplitViewFactory.comparisonOperations.status(current.tabID)) return;
+    pairingTabs.add(current.tabID); updateCompareButtons();
+    try {
+      if (SplitViewFactory.isComparison(current.tabID)) { await SplitViewFactory.closeComparison(current.tabID); return; }
+      const pair = await choosePair(Zotero.Items.get(current.itemID));
+      if (!pair) return;
+      await SplitViewFactory.openTranslationPair(pair.original.id,pair.translated.id,current);
+      if (!metadata(pair.translated) && (Zotero.Libraries.get(pair.translated.libraryID) as any).editable) {
+        await saveMetadata(pair.translated,{version:1,originalKey:pair.original.key,...SplitViewFactory.comparisonPageCounts(current.tabID)});
+      }
+    } finally { pairingTabs.delete(current.tabID); updateCompareButtons(); }
   }
 
   static prepareEnvironment() {
@@ -604,6 +604,10 @@ export class TranslationFactory {
 
   static async shutdown() {
     stopping = true;
+    if (pairingObserver) Zotero.Notifier.unregisterObserver(pairingObserver);
+    pairingObserver = undefined; pairingTabs.clear();
+    if (pairingRefreshTimer) clearTimeout(pairingRefreshTimer);
+    pairingRefreshTimer = undefined;
     for (const popup of notifications) popup.close(); notifications.clear();
     await runtime.cancel();
     bridge.listeners.delete(completedListener);

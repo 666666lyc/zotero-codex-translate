@@ -9,6 +9,7 @@ test("XPI contains its bootstrap, dialog, licenses and no placeholder identities
   assert.equal(manifest.version, pkg.version);
   assert.equal(manifest.applications.zotero.id, "codex-translate@zotero.local");
   assert.equal(manifest.applications.zotero.strict_min_version, "9.0.0");
+  assert.equal(manifest.applications.zotero.strict_max_version, "10.0.*");
   const repository = pkg.repository?.url?.replace(/^git\+/, "").replace(/\.git$/, "").replace("https://github.com/", "");
   assert.equal(manifest.applications.zotero.update_url, repository ? `https://raw.githubusercontent.com/${repository}/main/updates.json` : "https://example.invalid/zotero-codex/updates.json");
   const python = process.env.PYTHON || (process.platform === "win32" ? "python" : "python3");

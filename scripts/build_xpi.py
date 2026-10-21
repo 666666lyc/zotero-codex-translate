@@ -21,7 +21,7 @@ with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
     for path in sorted((root / "third_party").rglob("*")):
         if path.is_file() and path.suffix not in (".zip", ".sha256", ".html"):
             archive.write(path, path.relative_to(root).as_posix())
-    for name in ["dependency-inventory.json", "source-inventory.json", "wheels-windows-x64.json", "font-provenance.json"]:
+    for name in ["dependency-inventory.json", "source-inventory.json", "wheels-windows-x64.json", "font-provenance.json", "dependency-inventory-linux-x64.json", "wheels-linux-x64.json"]:
         archive.write(root / "runtime" / name, "licenses/" + name)
 digest = hashlib.sha256(target.read_bytes()).hexdigest()
 target.with_suffix(".xpi.sha256").write_text(f"{digest}  {target.name}\n", encoding="ascii")

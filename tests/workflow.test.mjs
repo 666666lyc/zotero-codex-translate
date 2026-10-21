@@ -20,8 +20,8 @@ function fixture({ failSave = false, failAck = false } = {}) {
     Reader: { open: async () => ({}) },
     Attachments: { importFromFile: async (options) => {
       imports++;
-      const relations = {};
-      const attachment = { id: 10, key: "OUTPUT01", attachmentFilename: options.fileBaseName + ".pdf", getRelations: () => relations,
+      const relations = {}; let note = "";
+      const attachment = { id: 10, key: "OUTPUT01", attachmentFilename: options.fileBaseName + ".pdf", getRelations: () => relations, getNote:()=>note, setNote:value=>{note=value;},
         addRelation: (predicate, value) => { relations[predicate] = [value]; },
         saveTx: async () => { if (failSave) { failSave = false; throw new Error("simulated crash before relation commit"); } },
         getFilePathAsync: async () => "translated.pdf" };
@@ -40,7 +40,7 @@ function fixture({ failSave = false, failAck = false } = {}) {
     return {};
   };
   const job = { id: "abcd", createdAt: 1, state: "completed", fingerprint: "fingerprint", result: { outputPath: "translated.pdf" } };
-  return { api, job, Zotero, get dialogData() { return panel; }, get imports() { return imports; }, get acknowledgements() { return acknowledgements; }, async panel() {
+  return { context, api, job, Zotero, get dialogData() { return panel; }, get imports() { return imports; }, get acknowledgements() { return acknowledgements; }, async panel() {
     await api.TranslationFactory.open(false);
     panel.source = source; panel.selectedJob = job;
     return panel;
@@ -55,15 +55,14 @@ test("concurrent result opens share one import and avoid nested Zotero transacti
   assert.equal(f.acknowledgements, 1);
 });
 
-test("different page counts allow standalone import but block comparison", async () => {
+test("different page counts still allow opening a comparison with counts preserved", async () => {
   const f = fixture();
   f.job.result = {outputPath:"translated.pdf",sourcePageCount:2,pageCount:1,comparisonAvailable:false};
-  const panel = await f.panel();
-  await assert.rejects(panel.open("compare"), /页数不同/);
-  assert.equal(f.imports, 0);
-  await panel.open("translated");
-  assert.equal(f.imports, 1);
-  await assert.rejects(f.api.SplitViewFactory.openTranslationPair(2,10), /页数不同/);
+  const panel = await f.panel();let compared=0;
+  f.api.SplitViewFactory.openTranslationPair=async()=>{compared++;};
+  await panel.open("compare");
+  assert.equal(f.imports,1);assert.equal(compared,1);
+  assert.match(f.Zotero.Items.get(10).getNote(),/sourcePageCount/);
 });
 
 test("background submission coalesces duplicate starts and creates no dialog", async () => {
@@ -167,10 +166,35 @@ test("cancel keeps actions locked until the old connection is fully closed", asy
   finishClose();await Promise.all([rejected,cancellation]);
 });
 
-test("license URI responses are passed as text rather than XMLHttpRequest objects", async () => {
+test("packaged licenses use local channels without the HTTP jar URI parser", async () => {
   const f=fixture(),panel=await f.panel();
-  f.Zotero.HTTP={request:async(_method,url)=>({responseText:url.endsWith('/LICENSE')?'GNU AFFERO GENERAL PUBLIC LICENSE':'Split-View Reader original notices'})};
+  f.context.ChromeUtils={importESModule:()=>({NetUtil:{newChannel:options=>{assert.equal(options.loadUsingSystemPrincipal,true);return options;}}})};
+  f.Zotero.File={getContentsAsync:async(channel,charset)=>{assert.equal(charset,'utf-8');return channel.uri.endsWith('/LICENSE')?'GNU AFFERO GENERAL PUBLIC LICENSE':'Split-View Reader original notices';}};
   await panel.licenses();
   assert.equal(f.dialogData.license,'GNU AFFERO GENERAL PUBLIC LICENSE');
   assert.equal(f.dialogData.notices,'Split-View Reader original notices');
+});
+
+function comparisonFixture({readonly=false,missing=false}={}) {
+  const f=fixture();let note='',opened=0;
+  const original={id:2,key:'SOURCE01',parentItemID:1,libraryID:1,attachmentContentType:'application/pdf',getNote:()=>'',getRelations:()=>({})};
+  const translated={...original,id:3,key:'TARGET01',getNote:()=>note,setNote:value=>{note=value;},saveTx:async()=>{}};
+  const parent={id:1,getAttachments:()=>[2,3]};
+  f.Zotero.Items.get=id=>({1:parent,2:original,3:translated})[id];
+  f.Zotero.Libraries.get=()=>({editable:!readonly});
+  f.api.SplitViewFactory.isComparison=()=>false;
+  f.api.SplitViewFactory.comparisonPageCounts=()=>({sourcePageCount:2,pageCount:2});
+  f.api.SplitViewFactory.openTranslationPair=async()=>{opened++;await new Promise(r=>setTimeout(r,10));if(missing)throw Error('PDF 文件不在本机');};
+  return {...f,reader:{tabID:'test',itemID:2},get note(){return note;},get opened(){return opened;}};
+}
+test('manual pairing coalesces clicks and only persists after successful open',async()=>{
+  const f=comparisonFixture();await Promise.all([f.api.TranslationFactory.openComparison(f.reader),f.api.TranslationFactory.openComparison(f.reader)]);
+  assert.equal(f.opened,1);assert.match(f.note,/ZOTERO_CODEX_TRANSLATION_V1/);
+});
+test('read-only library opens a temporary pair without writing attachment notes',async()=>{
+  const f=comparisonFixture({readonly:true});await f.api.TranslationFactory.openComparison(f.reader);assert.equal(f.opened,1);assert.equal(f.note,'');
+});
+test('a missing file does not save a pair, and the action can be retried',async()=>{
+  const f=comparisonFixture({missing:true});await assert.rejects(f.api.TranslationFactory.openComparison(f.reader),/不在本机/);assert.equal(f.note,'');
+  await assert.rejects(f.api.TranslationFactory.openComparison(f.reader),/不在本机/);assert.equal(f.opened,2);
 });

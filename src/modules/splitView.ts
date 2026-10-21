@@ -1,3 +1,4 @@
+import { metadata } from "./pairing";
 import { config } from "../../package.json";
 import { getString } from "../utils/locale";
 import { clearPref, getPref } from "../utils/prefs";
@@ -109,10 +110,6 @@ export class SplitViewFactory {
   }
 
   private static async performOpenTranslationPair(originalID: number, translatedID: number, reader: any) {
-    const item = Zotero.Items.get(translatedID);
-    const relations = item?.getRelations?.()["dc:relation"] || [];
-    const counts = (Array.isArray(relations) ? relations : [relations]).find((r: string) => r.startsWith("urn:zotero-codex:page-counts:"))?.split(":").slice(-2);
-    if (counts && counts[0] !== counts[1]) throw new Error("原文与译文页数不同，无法按页对应；请单独打开中文 PDF。");
     const originalItem = Zotero.Items.get(originalID), translatedItem = Zotero.Items.get(translatedID);
     if (!(await originalItem.getFilePathAsync()) || !(await translatedItem.getFilePathAsync())) throw new Error("原文或中文附件不在本机，请先下载附件。");
     const win = Zotero.getMainWindow() as any;
@@ -133,7 +130,23 @@ export class SplitViewFactory {
       this.installToolbarCloseButton(state.tabID, state.leftBrowser, "left");
       this.installToolbarCloseButton(state.tabID, state.rightBrowser, "right");
     }
-    this.setPrimarySide(reader.tabID, initial);
+    const counts = this.comparisonPageCounts(reader.tabID);
+    this.setPrimarySide(reader.tabID, counts?.sourcePageCount === counts?.pageCount && counts ? initial : null);
+    this.installComparisonControls(reader.tabID);
+  }
+
+  static comparisonPageCounts(tabID: string): {sourcePageCount:number;pageCount:number} | undefined {
+    const state = this.stateMap.get(tabID);
+    if (!state) return;
+    const count = (browser: any) => {
+      const reader = this.getInternalReaderFromBrowser(browser);
+      return this.getPdfViewerFromReader(reader)?.pagesCount || reader?._state?.primaryViewStats?.pagesCount;
+    };
+    const left = count(state.leftBrowser), right = count(state.rightBrowser);
+    if (Number.isInteger(left) && left > 0 && Number.isInteger(right) && right > 0) return {sourcePageCount:left,pageCount:right};
+    const translated = Zotero.Items.get(state.rightItemID);
+    const record = translated && metadata(translated);
+    if (record?.sourcePageCount && record?.pageCount) return {sourcePageCount:record.sourcePageCount,pageCount:record.pageCount};
   }
 
   static isComparison(tabID: string) { return !!this.stateMap.get(tabID)?.translationPair; }
@@ -4366,6 +4379,13 @@ export class SplitViewFactory {
         else this.setPrimarySide(tabID, current.primarySide ? null : current.activeSide);
       });
       bar.append(button);
+    }
+    const counts = this.comparisonPageCounts(tabID);
+    if (!counts || counts.sourcePageCount !== counts.pageCount) {
+      const label = doc.createElementNS("http://www.w3.org/1999/xhtml", "span");
+      label.className = "codex-comparison-page-warning";
+      label.textContent = counts ? `原文 ${counts.sourcePageCount} 页 · 译文 ${counts.pageCount} 页；页码不逐页对应，默认独立浏览` : "页数待确认，默认独立浏览";
+      bar.append(label);
     }
     state.container.insertBefore(bar, panes);
     const update = () => {

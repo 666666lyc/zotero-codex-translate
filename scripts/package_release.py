@@ -14,7 +14,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 GIT = ["git", "-c", f"safe.directory={ROOT.as_posix()}"]
 DIRECTORIES = ["src", "addon", "typings", "tests", "scripts", "runtime", "third_party", ".github"]
-ROOT_FILES = ["package.json", "package-lock.json", "tsconfig.json", "LICENSE", "README.md", "THIRD_PARTY_NOTICES.md", "UPSTREAM.json", ".gitignore", ".gitattributes", ".env.example", ".prettierignore", "eslint.config.mjs", "zotero-plugin.config.ts", "updates.json"]
+ROOT_FILES = ["package.json", "package-lock.json", "tsconfig.json", "LICENSE", "README.md", "THIRD_PARTY_NOTICES.md", "UPSTREAM.json", ".gitignore", ".gitattributes", ".env.example", ".prettierignore", "eslint.config.mjs", "zotero-plugin.config.ts", "updates.json", "pnpm-workspace.yaml"]
 EXCLUDED = {"__pycache__", "node_modules", ".venv", ".build-venv", ".git", ".scaffold", "tmp", "dist"}
 
 
@@ -64,7 +64,7 @@ def main():
         destination = output / Path(filename).name
         shutil.copyfile(ROOT / filename, destination)
         artifacts.append(destination)
-    for filename in ["dependency-inventory.json", "source-inventory.json", "wheels-windows-x64.json", "font-provenance.json", "python-downloads.json"]:
+    for filename in ["dependency-inventory.json", "source-inventory.json", "wheels-windows-x64.json", "font-provenance.json", "python-downloads.json", "dependency-inventory-linux-x64.json", "wheels-linux-x64.json"]:
         shutil.copyfile(ROOT / "runtime" / filename, output / filename)
         artifacts.append(output / filename)
     shutil.copyfile(ROOT / "bridge/src/zotero_codex_bridge/assets.json", output / "assets.json")

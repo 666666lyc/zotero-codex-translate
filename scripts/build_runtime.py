@@ -44,7 +44,7 @@ def main():
     names = [wheel, "install.py", "requirements-windows-x64.lock", "python-downloads.json"]
     hashes = {name: hashlib.sha256((destination / name).read_bytes()).hexdigest() for name in names}
     identity = hashlib.sha256(json.dumps(hashes, sort_keys=True).encode()).hexdigest()[:20]
-    manifest = dict(schemaVersion=1, bridgeVersion=version, environmentVersion=f"{version}-{identity}", bridgeWheel=wheel, bundleHashes=hashes, platforms=["windows-x64"], uv=dict(version="0.13.4", url="https://github.com/astral-sh/uv/releases/download/0.13.4/uv-x86_64-pc-windows-msvc.zip", sha256="ccec7508a07d9933d7cb1261880633efcf1f30d6e6eddab21823f1dae6f23225", size=15237259), python=dict(version="3.12.15", build="20261013", sha256="7a2aef48e5ee569e310b29b32681debbc5d888e92790d85331a47736c6b06aad"))
+    manifest = dict(schemaVersion=1, bridgeVersion=version, environmentVersion=f"{version}-{identity}", bridgeWheel=wheel, bundleHashes=hashes, platforms=["windows-x64", "linux-x64-manual"], uv=dict(version="0.13.4", url="https://github.com/astral-sh/uv/releases/download/0.13.4/uv-x86_64-pc-windows-msvc.zip", sha256="ccec7508a07d9933d7cb1261880633efcf1f30d6e6eddab21823f1dae6f23225", size=15237259), python=dict(version="3.12.15", build="20261013", sha256="7a2aef48e5ee569e310b29b32681debbc5d888e92790d85331a47736c6b06aad"))
     (destination / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     print("Runtime bundle:", identity, sum(p.stat().st_size for p in destination.iterdir()), "bytes")
 

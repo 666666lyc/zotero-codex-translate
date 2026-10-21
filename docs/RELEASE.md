@@ -7,7 +7,7 @@
 3. 通过已授权 GitHub 连接或官方 gh CLI 确认账号，创建公开空仓库；普通插件用户不需要本项目 GitHub 授权。
 4. 执行 `python scripts/configure_repository.py <已确认账号>/zotero-codex-translate`。重建并测试。该脚本写入真实源码地址和有效空更新清单 URL，不广告自动升级。
 5. `scripts/package_release.py` 使用源码目录白名单，排除缓存、环境、生成译文、文献、测试输出和凭据，并检查常见令牌/私钥标记。另检查 Git 暂存列表和大文件，不能只依赖扫描器。
-6. 初始化本地 Git（如尚未初始化），只加入核查通过的源码，配置本仓库提交身份为账号公开用户名和 noreply 地址。提交、推送 `main`，标记 `v0.1.0`。所有推送都必须使用确认过的目标仓库。
+6. 初始化本地 Git（如尚未初始化），只加入核查通过的源码，配置本仓库提交身份为账号公开用户名和 noreply 地址。提交、推送 `main`，标记 `v0.1.1`。所有推送都必须使用确认过的目标仓库。
 7. `python scripts/package_release.py --public` 要求干净 Git 工作区、HEAD 与版本标签相符、真实项目地址。上传 `dist/release/` 清单中的产物为 **prerelease**，明确开发预览和验收范围；禁止上传遗留 `dist/windows-*` 或离线字体模型 ZIP。
 8. Release 需提供轻量 XPI、SHA256、同版本对应源码包、依赖与资源清单、许可证、中文安装说明、验证矩阵和实测流量/空间/耗时。核对远端标签、附件摘要与源码包内容。
 

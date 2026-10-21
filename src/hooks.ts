@@ -30,7 +30,7 @@ async function onStartup() {
   BasicExampleFactory.registerPrefs();
 
   BasicExampleFactory.registerNotifier();
-  TranslationFactory.register();
+  await TranslationFactory.register();
   addon.api = {
     openTranslation: () => TranslationFactory.open(),
     openSettings: () => TranslationFactory.open(false),

@@ -106,7 +106,24 @@ class RuntimeManager {
     } finally { clearTimeout(deadline); if (this.child === child) this.child = null; }
   }
 
+  private async prepareLinux(): Promise<LaunchConfig> {
+    const manifest = await this.manifest();
+    const pointer = this.paths.join(this.root, "linux-current.json");
+    if (!(await this.io.exists(pointer))) throw new Error("Linux 需先使用 Python 3.12 运行源码中的 scripts/install_linux.py --data-dir <Zotero数据目录>/codex-translate；详见 docs/LINUX.md。");
+    const record = await this.io.readJSON(pointer);
+    const expectedPython = this.paths.join(this.root, "linux-env", "bin", "python");
+    const expectedAssets = this.paths.join(this.paths.parent(this.root), "engine-assets");
+    if (record.runtimeRoot !== this.root || record.python !== expectedPython || record.resourceDir !== expectedAssets || record.bridgeVersion !== manifest.bridgeVersion) {
+      throw new Error("Linux 环境路径或桥接版本不匹配，请重新运行 scripts/install_linux.py 后重启 Zotero。");
+    }
+    const launch = this.launch(record);
+    await this.run(launch.command, ["-I", "-c", "from zotero_codex_bridge.pdf_engine import check_runtime; from zotero_codex_bridge.resources import prepare; import sys; check_runtime(sys.argv[1]); prepare(sys.argv[1],verify_only=True)", record.resourceDir], launch.environment || {}, "checking");
+    this.update({ stage: "ready", detail: "Linux x64 · 专用 Python 环境已验证" });
+    return launch;
+  }
+
   private async prepare(repair: boolean): Promise<LaunchConfig> {
+    if (Services.appinfo.OS === "Linux" && Services.appinfo.XPCOMABI.startsWith("x86_64")) return this.prepareLinux();
     const cpu = Services.appinfo.XPCOMABI;
     if (Services.appinfo.OS !== "WINNT" || !cpu.startsWith("x86_64")) throw new Error("自动安装目前仅开放 Windows x64；其他平台可在高级设置使用外部桥接程序。");
     const manifest = await this.manifest();

@@ -1,7 +1,7 @@
 {
   "name": "zotero-codex-translate",
   "type": "module",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Translate academic PDFs through local Codex and read originals and Chinese translations side by side",
   "config": {
     "addonName": "Codex 文献翻译",
@@ -14,13 +14,13 @@
   "license": "AGPL-3.0-only",
   "scripts": {
     "build": "node scripts/build.mjs",
-    "test": "node --test tests/*.test.mjs",
+    "test": "node --test --test-isolation=none tests/*.test.mjs",
     "typecheck": "tsc --noEmit",
     "test:bridge": "python scripts/test_bridge.py",
     "package:bridge": "python scripts/package_bridge.py"
   },
   "dependencies": {
-    "zotero-plugin-toolkit": "^5.1.0-beta.13"
+    "zotero-plugin-toolkit": "5.1.0-beta.13"
   },
   "devDependencies": {
     "@types/chai": "^5.2.3",
@@ -33,7 +33,7 @@
     "prettier": "^3.7.4",
     "typescript": "^5.9.3",
     "zotero-plugin-scaffold": "^0.8.2",
-    "zotero-types": "^4.1.0-beta.4",
+    "zotero-types": "4.1.0-beta.4",
     "esbuild": "0.25.12"
   },
   "prettier": {
@@ -51,7 +51,7 @@
       }
     ]
   },
-  "homepage": "https://github.com/666666lyc/zotero-codex-translate/tree/v0.1.0",
+  "homepage": "https://github.com/666666lyc/zotero-codex-translate/tree/v0.1.1",
   "repository": {
     "type": "git",
     "url": "https://github.com/666666lyc/zotero-codex-translate.git"
