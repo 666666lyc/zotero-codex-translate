@@ -40,7 +40,7 @@ def main():
         assert re.fullmatch(r"https://github.com/[A-Za-z0-9-]+/zotero-codex-translate/tree/v" + re.escape(version), package.get("homepage", "")), "Configure actual repository first"
         assert subprocess.check_output([*GIT, "rev-parse", "HEAD"], cwd=ROOT).strip() == subprocess.check_output([*GIT, "rev-parse", f"v{version}^{{commit}}"], cwd=ROOT).strip(), "Tag must match HEAD"
         assert not subprocess.check_output([*GIT, "status", "--porcelain"], cwd=ROOT).strip(), "Release source must be clean"
-    output = ROOT / "dist" / ("release" if args.public else "local-preview")
+    output = ROOT / "dist" / "release" if args.public else ROOT / "dist" / "local-preview" / version
     output.mkdir(parents=True, exist_ok=True)
     source = output / f"zotero-codex-translate-{version}-source.zip"
     paths = sorted(set(sources()))
@@ -60,7 +60,7 @@ def main():
     xpi = ROOT / "dist" / f"zotero-codex-translate-{version}.xpi"
     shutil.copyfile(xpi, output / xpi.name)
     artifacts.append(output / xpi.name)
-    for filename in ["README.md", "LICENSE", "THIRD_PARTY_NOTICES.md", "docs/VALIDATION.md", "docs/AUTO_INSTALL.md"]:
+    for filename in ["README.md", "LICENSE", "THIRD_PARTY_NOTICES.md", "docs/VALIDATION.md", "docs/AUTO_INSTALL.md", "docs/LOCAL_FIX.md", "docs/RELEASE_NOTES.md"]:
         destination = output / Path(filename).name
         shutil.copyfile(ROOT / filename, destination)
         artifacts.append(destination)

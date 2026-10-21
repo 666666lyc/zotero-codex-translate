@@ -1,6 +1,8 @@
 import { config } from "../../package.json";
 import { getString } from "../utils/locale";
 import { clearPref, getPref } from "../utils/prefs";
+import { ComparisonSync } from "./comparisonSync";
+import { ComparisonOperations, styleReaderToolbar, toolbarButton } from "./readerToolbar";
 import {
   getSplitViewTabTitleForItems,
   type SplitTabsTitleMode,
@@ -29,6 +31,9 @@ interface ToolbarCloseObserver {
 }
 
 interface SplitTabState {
+  comparisonControlCleanup?: () => void;
+  comparison?: ComparisonSync;
+  translationPair?: boolean;
   tabID: string;
   container: XUL.Box;
   leftBrowser: XULBrowserElement;
@@ -95,8 +100,21 @@ interface SeparateViewTarget {
 const SPLIT_VIEW_PROMPT_COMMAND_ID = "codex-translation-split-view";
 
 export class SplitViewFactory {
+  static readonly comparisonOperations = new ComparisonOperations();
   /** Open a known original/translation pair without the upstream PDF picker. */
-  static async openTranslationPair(originalID: number, translatedID: number) {
+  static async openTranslationPair(originalID: number, translatedID: number, currentReader?: any) {
+    const reader = currentReader || await Zotero.Reader.open(originalID, undefined, { allowDuplicate: true });
+    if (!reader) throw new Error("无法打开原文阅读器。");
+    return this.comparisonOperations.run(reader.tabID, "opening", () => this.performOpenTranslationPair(originalID, translatedID, reader));
+  }
+
+  private static async performOpenTranslationPair(originalID: number, translatedID: number, reader: any) {
+    const item = Zotero.Items.get(translatedID);
+    const relations = item?.getRelations?.()["dc:relation"] || [];
+    const counts = (Array.isArray(relations) ? relations : [relations]).find((r: string) => r.startsWith("urn:zotero-codex:page-counts:"))?.split(":").slice(-2);
+    if (counts && counts[0] !== counts[1]) throw new Error("原文与译文页数不同，无法按页对应；请单独打开中文 PDF。");
+    const originalItem = Zotero.Items.get(originalID), translatedItem = Zotero.Items.get(translatedID);
+    if (!(await originalItem.getFilePathAsync()) || !(await translatedItem.getFilePathAsync())) throw new Error("原文或中文附件不在本机，请先下载附件。");
     const win = Zotero.getMainWindow() as any;
     for (const state of this.stateMap.values()) {
       if (state.leftItemID === originalID && state.rightItemID === translatedID) {
@@ -104,11 +122,23 @@ export class SplitViewFactory {
         return;
       }
     }
-    const reader = await Zotero.Reader.open(originalID, undefined, { allowDuplicate: true });
-    if (!reader) throw new Error("无法打开原文阅读器。");
     await this.waitForReaderReady(reader);
-    await this.convertToSplitView(reader, Zotero.Items.get(translatedID));
-    this.setPrimarySide(reader.tabID, "left");
+    const initial = reader.itemID === translatedID ? "right" : "left";
+    await this.convertToSplitView(reader, Zotero.Items.get(reader.itemID === translatedID ? originalID : translatedID));
+    if (initial === "right") await this.swapPDFs(reader.tabID);
+    const state = this.stateMap.get(reader.tabID);
+    if (state) {
+      state.translationPair = true;
+      state.activeSide = initial;
+      this.installToolbarCloseButton(state.tabID, state.leftBrowser, "left");
+      this.installToolbarCloseButton(state.tabID, state.rightBrowser, "right");
+    }
+    this.setPrimarySide(reader.tabID, initial);
+  }
+
+  static isComparison(tabID: string) { return !!this.stateMap.get(tabID)?.translationPair; }
+  static closeComparison(tabID: string) {
+    return this.comparisonOperations.run(tabID, "closing", () => this.revertToSingleReader(tabID));
   }
 
   /** Per-tab split view states. Each tab can independently have its own split view. */
@@ -1985,6 +2015,7 @@ export class SplitViewFactory {
     // Restore saved settings
     const state = this.stateMap.get(tabID);
     if (state) {
+      state.translationPair = !!savedData.translationPair;
       // Restore split ratio
       if (typeof splitRatio === "number" && splitRatio > 0 && splitRatio < 1) {
         state.splitRatio = splitRatio;
@@ -2024,6 +2055,11 @@ export class SplitViewFactory {
         state.activeSide = activeSide;
       }
 
+      if (state.translationPair) {
+        this.installToolbarCloseButton(tabID, state.leftBrowser, "left");
+        this.installToolbarCloseButton(tabID, state.rightBrowser, "right");
+      }
+
       // Persist the restored state back into the tab session data so an
       // explicit `primarySide: null` survives the next Zotero restart.
       this.updateTabDataForSession(tabID);
@@ -2058,6 +2094,7 @@ export class SplitViewFactory {
         leftItemID: state.leftItemID,
         rightItemID: state.rightItemID,
         isCodexSplitView: true,
+        translationPair: !!state.translationPair,
         isSamePDF: state.isSamePDF,
         splitRatio: state.splitRatio,
         primarySide: state.primarySide,
@@ -2368,6 +2405,11 @@ export class SplitViewFactory {
     this.stopSyncPolling(tabID);
 
     state.primarySide = side;
+    const syncButton = state.container?.querySelector(".codex-comparison-sync");
+    if (syncButton) {
+      syncButton.textContent = side ? "同步：开" : "独立浏览";
+      syncButton.setAttribute("aria-pressed", String(!!side));
+    }
     state.lastPrimaryScroll = null;
 
     // Update scrollbar colors to reflect new primary side
@@ -3140,6 +3182,7 @@ export class SplitViewFactory {
         leftItemID,
         rightItemID: secondaryPDF.id,
         isCodexSplitView: true,
+        translationPair: !!newState.translationPair,
         isSamePDF: false,
         splitRatio: newState.splitRatio,
       });
@@ -3486,6 +3529,7 @@ export class SplitViewFactory {
         leftItemID: itemID,
         rightItemID: itemID,
         isCodexSplitView: true,
+        translationPair: !!newState.translationPair,
         isSamePDF: true,
         splitRatio: newState.splitRatio,
       });
@@ -3905,7 +3949,7 @@ export class SplitViewFactory {
     direction: "in" | "out" | "reset",
   ) {
     const state = this.stateMap.get(tabID);
-    if (!state || state.isCleaningUp) return;
+    if (!state || state.isCleaningUp || !state.isSamePDF) return;
     const primarySide = this.getEffectivePrimarySide(state);
     if (!primarySide) return;
 
@@ -4295,6 +4339,47 @@ export class SplitViewFactory {
   /**
    * Add a close button to the reader toolbar for this split-view side.
    */
+  private static installComparisonControls(tabID: string) {
+    const state = this.stateMap.get(tabID);
+    if (!state || state.container.querySelector(".codex-comparison-bar")) return;
+    const doc = state.container.ownerDocument!;
+    styleReaderToolbar(doc);
+    const bar = doc.createElementNS("http://www.w3.org/1999/xhtml", "div") as HTMLDivElement;
+    bar.className = "codex-comparison-bar";
+    bar.style.cssText = "display:flex;align-items:center;gap:10px;flex:0 0 32px;padding:0 10px;border-bottom:1px solid var(--material-border,#ddd);background:var(--material-toolbar,#f5f5f5);box-sizing:border-box";
+    (state.container as any).style.flexDirection = "column";
+    const panes = state.leftBrowser.parentElement as HTMLElement;
+    panes.style.flex = "1 1 0"; panes.style.height = "0"; panes.style.minHeight = "0";
+    for (const kind of ["toggle", "sync"]) {
+      const button = toolbarButton(doc, "", `codex-comparison-${kind}`);
+      button.tabIndex = 0; // This main-window control bar is outside the reader's roving toolbar.
+      button.textContent = kind === "toggle" ? "中英对照 · 关闭" : state.primarySide ? "同步：开" : "独立浏览";
+      button.title = kind === "toggle" ? "退出中英对照，保留当前操作侧阅读位置" : "切换双向连续同步与独立浏览";
+      button.setAttribute("aria-pressed", String(kind === "toggle" || !!state.primarySide));
+      button.addEventListener("click", () => {
+        const current = this.stateMap.get(tabID);
+        if (!current || current.isCleaningUp) return;
+        if (kind === "toggle") void this.closeComparison(tabID).catch(e => {
+          Zotero.logError(e);
+          Services.prompt.alert(Zotero.getMainWindow() as any, "中英对照", String(e.message || e));
+        });
+        else this.setPrimarySide(tabID, current.primarySide ? null : current.activeSide);
+      });
+      bar.append(button);
+    }
+    state.container.insertBefore(bar, panes);
+    const update = () => {
+      const busy = this.comparisonOperations.status(tabID);
+      const button = bar.querySelector<HTMLButtonElement>(".codex-comparison-toggle")!;
+      button.disabled = !!busy;
+      button.textContent = busy === "closing" ? "正在关闭…" : "中英对照 · 关闭";
+      button.setAttribute("aria-busy", String(!!busy));
+    };
+    this.comparisonOperations.listeners.add(update);
+    state.comparisonControlCleanup = () => this.comparisonOperations.listeners.delete(update);
+    update();
+  }
+
   private static installToolbarCloseButton(
     tabID: string,
     browser: XULBrowserElement,
@@ -4329,6 +4414,7 @@ export class SplitViewFactory {
       const addButton = () => {
         const currentState = self.stateMap.get(tabID);
         if (!currentState || currentState.isCleaningUp) return;
+        if (currentState.translationPair) self.installComparisonControls(tabID);
         if (doc.getElementById(buttonID)) return;
 
         const findButton = doc.querySelector(
@@ -5762,6 +5848,7 @@ export class SplitViewFactory {
   private static cleanupTabResources(tabID: string) {
     const state = this.stateMap.get(tabID);
     if (!state) return;
+    state.comparisonControlCleanup?.();
 
     // Mark as cleaning up to prevent further operations
     state.isCleaningUp = true;
@@ -6024,6 +6111,27 @@ export class SplitViewFactory {
     if (!state || state.isCleaningUp) return;
     const primarySide = this.getEffectivePrimarySide(state);
     if (!primarySide) return;
+    if (!state.isSamePDF) {
+      state.comparison?.dispose();
+      const viewer = (side: "left" | "right") => this.getPdfViewerFromReader(this.getInternalReaderFromBrowser(side === "left" ? state.leftBrowser : state.rightBrowser));
+      if (!viewer("left")?.container || !viewer("right")?.container) {
+        this.trackTimeout(state, () => { if (!state.isCleaningUp) this.startSyncPolling(tabID); }, 200);
+        return;
+      }
+      state.comparison = new ComparisonSync({
+        window: Zotero.getMainWindow(), initial: state.activeSide || primarySide, viewer,
+        enabled: () => !state.isCleaningUp && !!state.primarySide && !state.syncPaused,
+        active: side => { state.activeSide = side; },
+        documents: side => {
+          const browser = side === "left" ? state.leftBrowser : state.rightBrowser;
+          const reader = this.getInternalReaderFromBrowser(browser);
+          return [...new Set([browser.contentDocument, viewer(side)?.container?.ownerDocument,
+            reader?._primaryView?._iframeWindow?.document,
+            reader?._primaryView?._iframe?.contentDocument].filter(Boolean))] as Document[];
+        },
+      });
+      return;
+    }
 
     try {
       const primaryBrowser =
@@ -6073,6 +6181,7 @@ export class SplitViewFactory {
   private static stopSyncPolling(tabID: string) {
     const state = this.stateMap.get(tabID);
     if (!state) return;
+    state.comparison?.dispose(); state.comparison = undefined;
 
     // Remove scroll listener
     if (state.scrollHandler) {
@@ -6109,16 +6218,8 @@ export class SplitViewFactory {
     if (state.ctrlPressed) return;
     if (state.zoomingCount > 0) return;
 
-    // Original and translated text can have different line lengths. Follow the
-    // actual PDF page, never pixel deltas that gradually drift across pages.
     if (!state.isSamePDF) {
-      const primary = primarySide === "left" ? state.leftBrowser : state.rightBrowser;
-      const secondary = primarySide === "left" ? state.rightBrowser : state.leftBrowser;
-      const view = this.getImmediateViewStateFromBrowser(primary);
-      const target = this.getImmediateViewStateFromBrowser(secondary);
-      if (view && target && view.pageIndex !== target.pageIndex) {
-        this.navigatePage(secondary, view.pageIndex);
-      }
+      state.comparison?.changed(state.activeSide || primarySide);
       return;
     }
     if (!state.lastPrimaryScroll) return;
@@ -6538,7 +6639,7 @@ export class SplitViewFactory {
     direction: "in" | "out",
   ) {
     const state = this.stateMap.get(tabID);
-    if (!state || state.isCleaningUp) return;
+    if (!state || state.isCleaningUp || !state.isSamePDF) return;
     const primarySide = this.getEffectivePrimarySide(state);
     if (!primarySide) return;
 
@@ -6699,15 +6800,9 @@ export class SplitViewFactory {
   ) {
     if (!Number.isInteger(viewState?.pageIndex)) return;
     for (const state of this.stateMap.values()) {
-      if (state.isSamePDF || state.isCleaningUp || state.syncPaused) continue;
-      const primary = this.getEffectivePrimarySide(state);
-      const source = primary === "left" ? state.leftBrowser : primary === "right" ? state.rightBrowser : null;
-      if (source !== sourceBrowser) continue;
-      const targetBrowser = primary === "left" ? state.rightBrowser : state.leftBrowser;
-      const targetState = primary === "left" ? state.rightViewState : state.leftViewState;
-      if (targetState?.pageIndex !== viewState.pageIndex) {
-        this.navigatePage(targetBrowser, viewState.pageIndex);
-      }
+      if (state.isSamePDF || state.isCleaningUp || state.syncPaused || !state.primarySide) continue;
+      if (sourceBrowser === state.leftBrowser) state.comparison?.changed("left");
+      else if (sourceBrowser === state.rightBrowser) state.comparison?.changed("right");
     }
   }
 
@@ -6763,7 +6858,7 @@ export class SplitViewFactory {
     const state = this.stateMap.get(tabID);
     if (!state || state.isCleaningUp) return;
     const shouldPromotePrimary =
-      getPref("followFocusPrimary") &&
+      state.isSamePDF && getPref("followFocusPrimary") &&
       state.primarySide !== null &&
       state.primarySide !== side;
     if (state.activeSide === side && !shouldPromotePrimary) return;

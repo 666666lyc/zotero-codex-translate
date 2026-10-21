@@ -62,6 +62,22 @@ class CoreTests(unittest.TestCase):
                 service.translate("A complete paragraph of source text.")
         self.assertEqual(client.calls, 1)
 
+    def test_cache_only_relayout_never_constructs_a_client(self):
+        def forbidden():
+            self.fail("Cache-only layout must never start Codex")
+        source = "This paragraph contains a formula {v1}."
+        from zotero_codex_bridge.translation import PROMPT_VERSION
+        import hashlib
+        key = hashlib.sha256(json.dumps([PROMPT_VERSION, "doc", "model", source], ensure_ascii=False).encode()).hexdigest()
+        self.store.cache_put(key, "这是中文译文 {v1}。")
+        service = TranslationService(self.store, forbidden, "doc", "model", cache_only=True)
+        self.addCleanup(service.close)
+        self.assertEqual(service.translate(source), "这是中文译文 {v1}。")
+        with self.assertRaises(BridgeError) as error:
+            service.translate("A missing paragraph with uncached text.")
+        self.assertEqual(error.exception.code, "CACHE_INCOMPLETE")
+        self.assertEqual(service.stats["requests"], 0)
+
     def test_cancellation_does_not_use_cached_or_new_request(self):
         event = threading.Event()
         event.set()
@@ -122,17 +138,16 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(inspect_pdf(original)["pageCount"], 2)
         self.assertEqual(validate_pdf(original, original)["pageMap"], [1, 2])
         wrong = self.make_pdf("wrong.pdf", 1)
-        with self.assertRaises(BridgeError) as context:
-            validate_pdf(original, wrong)
-        self.assertEqual(context.exception.code, "PAGE_COUNT")
+        report = validate_pdf(original, wrong)
+        self.assertEqual(report["pageCount"], 1)
+        self.assertFalse(report["comparisonAvailable"])
+        self.assertEqual(report["pageMap"], [])
         with self.assertRaises(BridgeError) as context:
             inspect_pdf(self.make_pdf("scan.pdf", text=""))
         self.assertEqual(context.exception.code, "SCANNED_PDF")
 
-    def test_empty_output_page_is_rejected(self):
-        with self.assertRaises(BridgeError) as context:
-            validate_pdf(self.make_pdf("original.pdf"), self.make_pdf("empty.pdf", text=""))
-        self.assertEqual(context.exception.code, "MISSING_PAGE_TEXT")
+    def test_upstream_blank_page_is_not_rejected_by_bridge_text_count(self):
+        self.assertEqual(validate_pdf(self.make_pdf("original.pdf"), self.make_pdf("empty.pdf", text=""))["pageCount"], 1)
 
 
 FAKE_CODEX = r'''

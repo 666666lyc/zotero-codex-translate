@@ -12,14 +12,22 @@
   <p id="document-title"></p>
   <section>
     <p id="environment-state" role="status" aria-live="polite">检查运行环境……</p>
+    <p id="connection-state" role="status" aria-live="polite">桥接：未连接</p>
+    <p id="operation-state" role="status" aria-live="polite"></p>
+    <p id="message" role="status" aria-live="polite"></p>
+    <details id="connection-details"><summary>连接诊断详情</summary><pre id="connection-diagnostics"></pre></details>
     <progress id="environment-progress" max="100"></progress>
     <div class="actions"><button data-action="prepare" id="prepare-environment">准备 / 继续</button><button data-action="cancelEnvironment" id="cancel-environment">取消环境准备</button><button data-action="repair" id="repair-environment">检查与修复</button></div>
     <p class="hint">首次从官方上游下载完整 Python、依赖、字体和模型，预计约 600～650 MB。仅 Windows x64 开放自动安装；Codex CLI 需单独安装。</p>
     <label for="codexPath">Codex CLI（留空自动查找）</label>
     <div class="path"><input id="codexPath" placeholder="codex 或 codex.exe 的完整路径" /><button data-choose="codexPath">浏览</button></div>
-    <label for="model">翻译模型</label>
-    <select id="model"><option value="">使用 Codex 默认模型</option></select>
-    <div class="actions"><button data-action="diagnose">检测登录与模型</button><button data-action="reconnect">重新连接</button></div>
+    <p class="field-label" id="model-label">翻译模型</p>
+    <input type="hidden" id="model" />
+    <details class="choice-picker" id="model-picker">
+      <summary id="model-current" aria-labelledby="model-label model-current">使用 Codex 默认模型</summary>
+      <fieldset id="model-options" aria-labelledby="model-label"></fieldset>
+    </details>
+    <div class="actions"><button data-action="diagnose">检测登录与模型</button><button data-action="reconnect">重新连接</button><button data-action="cancelConnection" id="cancel-connection" disabled="disabled">取消检测 / 连接</button></div>
     <p class="hint">先安装 Codex CLI 并运行 codex login。翻译文本会通过 Codex 发送给模型，使用账号相应额度。</p>
   </section>
   <details id="setup">
@@ -32,15 +40,22 @@
   <section>
     <div class="actions"><button class="primary" data-action="start" id="start">翻译全文 / 打开已有译文</button><button data-action="retranslate" id="retranslate">重新翻译为新版本</button></div>
     <p class="hint">支持单篇文本 PDF；尽量保留版式、图片和公式。图像内文字保持原样。原文和已有译文均会保留。</p>
-    <label for="jobs">此附件的翻译任务</label>
-    <select id="jobs"><option value="">暂无任务</option></select>
+    <p class="field-label" id="jobs-label">翻译任务</p>
+    <input type="hidden" id="jobs" />
+    <details class="choice-picker" id="jobs-picker">
+      <summary id="jobs-current" aria-labelledby="jobs-label jobs-current">暂无任务</summary>
+      <fieldset id="jobs-options" aria-labelledby="jobs-label"></fieldset>
+    </details>
     <progress id="progress" max="100"></progress>
     <p id="stage" aria-live="polite">就绪</p>
-    <div class="actions"><button data-action="resume" id="resume">继续 / 重试</button><button data-action="cancel" id="cancel">取消任务</button><button data-action="refresh">刷新状态</button></div>
+    <p id="job-metrics" class="hint"></p>
+    <p id="layout-recovery" class="hint"></p>
+    <details><summary>任务诊断详情</summary><pre id="job-diagnostics"></pre></details>
+    <p id="job-error" role="status" aria-live="polite"></p>
+    <div class="actions"><button data-action="resume" id="resume">继续 / 重试</button><button data-action="relayout" id="relayout">使用缓存重新排版</button><button data-action="recoverOutput" id="recover-output">恢复已生成 PDF</button><button data-action="cancel" id="cancel">取消任务</button><button data-action="refresh">刷新状态</button></div>
     <div class="actions"><button data-action="translated" id="translated">打开中文 PDF</button><button data-action="compare" id="compare">打开中英对照</button></div>
-    <p class="hint">对照视图：左英文、右中文；默认按页联动。右键“取消主视图”可独立浏览，再选择“设为主视图”恢复联动。</p>
+    <p class="hint">对照视图：左英文、右中文；任意一侧均可带动另一侧同步页码与页内位置。点击“同步：开”可切换独立浏览。译文默认采用 BabelDOC 原生排版。</p>
   </section>
-  <p id="message" role="status" aria-live="polite"></p>
   <p class="hint">本插件源码采用 AGPL v3；第三方组件保留各自许可。<a href="https://github.com/zerolfl/zotero-split-view-reader/tree/600f1bd99d9a52a99683702f6681bf34b83bfec3">Split-View Reader · Fuling Lin</a> · <a href="https://github.com/funstory-ai/BabelDOC/tree/v0.6.4">BabelDOC</a> · <button data-action="licenses">查看许可证与对应源码</button></p>
 </body>
 </html>

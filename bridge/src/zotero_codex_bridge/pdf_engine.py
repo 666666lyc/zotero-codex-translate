@@ -1,40 +1,41 @@
-"""All BabelDOC 0.6.4 internal API dependencies are confined to this module.
-
-Upstream intentionally tolerates some paragraph failures. We fail closed on
-those failures, placeholder loss, and unsuccessful typesetting instead.
-"""
+"""BabelDOC public API orchestration; no internal method replacement or PDF editing."""
 import asyncio
-import contextlib
 import importlib.metadata
-import logging
 import os
-import re
 import shutil
+import threading
 from pathlib import Path
-from unittest.mock import patch
 
-from . import BABELDOC_VERSION
+from . import BABELDOC_VERSION, VERSION
 from .errors import BridgeError
+
+_ASSET_IMPORT_LOCK = threading.Lock()
 
 
 def configure_assets(directory):
-    """Import the pinned engine constants with a dedicated local asset home.
+    """Let unmodified upstream resolve its home in this process's environment.
 
-    BabelDOC 0.6.4 has no cache-directory environment option and creates its
-    tiktoken directory at import time. Scope this override to that one import,
-    before workers or other third-party libraries are started.
+    Only const.py reads Path.home. Restore HOME/USERPROFILE before Codex or any
+    other operation starts, so CLI discovery and credentials retain the real home.
+    No Python methods or upstream globals are assigned/replaced.
     """
-    directory = os.environ.get("ZOTERO_CODEX_ASSET_DIR", directory)
-    with patch.object(Path, "home", return_value=Path(directory).resolve()):
-        import babeldoc.const  # noqa: F401
+    directory = Path(os.environ.get("ZOTERO_CODEX_ASSET_DIR", directory)).resolve()
+    with _ASSET_IMPORT_LOCK:
+        previous = {key: os.environ.get(key) for key in ("HOME", "USERPROFILE")}
+        try:
+            os.environ.update(HOME=str(directory), USERPROFILE=str(directory))
+            from babeldoc.const import CACHE_FOLDER
+        finally:
+            for key, value in previous.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+        if CACHE_FOLDER != directory / ".cache" / "babeldoc":
+            raise BridgeError("ASSET_HOME", "PDF 引擎已在另一资源目录初始化，请重启桥接后重试。")
 
 
 def prepare_assets():
-    """Use bounded connections and a realistic timeout for large model files.
-
-    The upstream default launches all downloads with HTTPX's five-second read
-    timeout, which is unsuitable for the first-run model/font bundle.
-    """
     from .resources import prepare
     from babeldoc.const import CACHE_FOLDER
     prepare(CACHE_FOLDER.parent.parent)
@@ -78,56 +79,30 @@ def inspect_pdf(path):
 
 
 def validate_pdf(source, translated):
+    """Accept an openable upstream output; collect page metadata, never reject layout."""
     import pymupdf
-    with pymupdf.open(source) as original, pymupdf.open(translated) as target:
-        if original.page_count != target.page_count:
-            raise BridgeError("PAGE_COUNT", "译文页数与原文不一致。")
-        for i, (a, b) in enumerate(zip(original, target)):
-            if abs(a.rect.width - b.rect.width) > 1 or abs(a.rect.height - b.rect.height) > 1:
-                raise BridgeError("PAGE_SIZE", f"第 {i + 1} 页尺寸不一致。")
-            if len(a.get_text().strip()) > 80 and len(b.get_text().strip()) < 10:
-                raise BridgeError("MISSING_PAGE_TEXT", f"译文第 {i + 1} 页缺少文本。")
-            for block in b.get_text("dict")["blocks"]:
-                for line in block.get("lines", []):
-                    for span in line["spans"]:
-                        x0, y0, x1, y1 = span["bbox"]
-                        if x0 < -2 or y0 < -2 or x1 > b.rect.width + 2 or y1 > b.rect.height + 2:
-                            raise BridgeError("TEXT_CLIPPED", f"译文第 {i + 1} 页有文本超出页面。")
-        return {"pageCount": target.page_count, "pageMap": list(range(1, target.page_count + 1))}
+    try:
+        # A malformed file can retain a Windows native file handle on open failure.
+        # Opening the output from bytes avoids that leak and never rewrites it.
+        with pymupdf.open(source) as original, pymupdf.open(stream=Path(translated).read_bytes(), filetype="pdf") as target:
+            if target.needs_pass or target.page_count == 0:
+                raise ValueError("PDF 没有可读取页面")
+            matched = original.page_count == target.page_count
+            return {"pageCount": target.page_count, "sourcePageCount": original.page_count,
+                    "pageMap": list(range(1, target.page_count + 1)) if matched else [],
+                    "comparisonAvailable": matched}
+    except Exception as error:
+        raise BridgeError("INVALID_OUTPUT", "BabelDOC 输出不存在、已损坏或无法打开。") from error
 
 
-class FailureCollector(logging.Handler):
-    def __init__(self):
-        super().__init__(logging.WARNING)
-        self.failures = []
-
-    def emit(self, record):
-        if record.levelno >= logging.ERROR or any(s in record.getMessage().lower() for s in ("placeholder", "failed to translate", "contentfiltererror", "坐标回绕", "预处理段落时出错")):
-            # Avoid retaining source paragraphs in normal diagnostic output.
-            self.failures.append(record.name + ": " + record.levelname)
-
-
-def run_translation(source, output, work_dir, service, notify, offline_assets=""):
-    check_dependencies()
-    inspect_pdf(source)
-    configure_assets(service.store.root / "engine-assets")
-    from babeldoc.assets.assets import restore_offline_assets_package
-    from babeldoc.docvision.doclayout import OnnxModel
-    from babeldoc.format.pdf.high_level import async_translate
-    from babeldoc.format.pdf.translation_config import TranslationConfig, WatermarkOutputMode
-    from babeldoc.format.pdf.document_il.midend.il_translator import ILTranslator
-    from babeldoc.format.pdf.document_il.midend.typesetting import Typesetting
+def create_translator(service):
     from babeldoc.translator.translator import BaseTranslator
 
-    notify({"stage": "assets", "completed": 0, "total": None})
-    if offline_assets:
-        restore_offline_assets_package(Path(offline_assets))
-    prepare_assets()  # Upstream verifies embedded SHA3-256 digests for downloaded assets.
-
-    class Translator(BaseTranslator):
+    class CodexTranslator(BaseTranslator):
         name = "zotero-codex"
 
         def __init__(self):
+            # Existing document/model/prompt cache belongs to TranslationService.
             super().__init__("en", "zh", True)
             self.model = service.model
 
@@ -135,91 +110,66 @@ def run_translation(source, output, work_dir, service, notify, offline_assets=""
             return service.translate(text)
 
         def do_llm_translate(self, text, rate_limit_params=None):
-            raise NotImplementedError  # Use paragraph mode for strict per-paragraph validation.
+            # Upstream detects this and uses its standard paragraph translator.
+            raise NotImplementedError
 
         def get_formular_placeholder(self, placeholder_id):
+            # Supported translator extension; keep historical cache keys valid.
             return "{v" + str(placeholder_id) + "}", r"\{v" + str(placeholder_id) + r"\}"
 
-    # Preserve the bibliography after the References heading as well as any
-    # regions explicitly classified as references by the layout model.
-    references = set()
-    original_translate = ILTranslator.translate
-    original_preprocess = ILTranslator.pre_translate_paragraph
-    original_layout = Typesetting._find_optimal_scale_and_layout
+    return CodexTranslator()
 
-    def translate_document(instance, docs):
-        after_heading = False
-        for page in docs.page:
-            for paragraph in page.pdf_paragraph:
-                text = (paragraph.unicode or "").strip()
-                if re.fullmatch(r"(?:\d+[. ]*)?(?:references|bibliography|literature cited)", text, re.I):
-                    after_heading = True
-                if after_heading or "reference" in (paragraph.layout_label or "").lower():
-                    references.add(id(paragraph))
-        return original_translate(instance, docs)
 
-    def preprocess(instance, paragraph, *args, **kwargs):
-        if id(paragraph) in references:
-            return None, None
-        return original_preprocess(instance, paragraph, *args, **kwargs)
-
-    def layout(instance, paragraph, page, units, *args, **kwargs):
-        result = original_layout(instance, paragraph, page, units, *args, **kwargs)
-        # Recursive fallback may be caught upstream. Record failures separately.
-        apply = kwargs.get("apply_layout", args[2] if len(args) > 2 else False)
-        if apply and units and (result[1] is None or result[0] < 0.5):
-            collector.failures.append("typesetting: incomplete or unreadable paragraph")
-            raise BridgeError("LAYOUT_OVERFLOW", "段落无法完整排版，或字体被压缩到不可读大小。")
-        return result
-
-    collector = FailureCollector()
-    logger = logging.getLogger("babeldoc")
-    logger.addHandler(collector)
-    config = TranslationConfig(
-        translator=Translator(), input_file=Path(source), lang_in="en", lang_out="zh",
+def translation_config(source, output, work_dir, translator):
+    from babeldoc.docvision.doclayout import OnnxModel
+    from babeldoc.format.pdf.translation_config import TranslationConfig, WatermarkOutputMode
+    return TranslationConfig(
+        translator=translator, input_file=Path(source), lang_in="en", lang_out="zh",
         doc_layout_model=OnnxModel.from_pretrained(), output_dir=Path(output).parent,
         working_dir=Path(work_dir), no_dual=True, no_mono=False, qps=1,
-        pool_max_workers=1, use_rich_pbar=False, auto_extract_glossary=False,
+        pool_max_workers=8, use_rich_pbar=False, auto_extract_glossary=False,
         watermark_output_mode=WatermarkOutputMode.NoWatermark, report_interval=0.5,
         skip_scanned_detection=False, auto_enable_ocr_workaround=False, min_text_length=1,
-        # Table internals and image text remain unchanged; do not enable experimental table rewriting.
     )
 
-    async def execute():
-        result = None
-        async for event in async_translate(config):
-            kind = event.get("type", "")
-            if kind.startswith("progress"):
-                stage = event.get("stage", "")
-                notify({"stage": "translating" if "translat" in stage.lower() else "typesetting" if "typeset" in stage.lower() or "pdf" in stage.lower() and "generat" in stage.lower() else "parsing",
-                        "detail": stage, "completed": event.get("stage_current", 0), "total": event.get("stage_total"), "percent": event.get("overall_progress", 0)})
-            elif kind == "finish":
-                result = event["translate_result"]
-                # BabelDOC 0.6.4 leaves its callback iterator open on success.
-                # Do not wait for a second event after the terminal result.
-                break
-            elif kind == "error":
-                if service.error:
-                    raise service.error
-                raise BridgeError("ENGINE_FAILED", str(event.get("error", "PDF 处理失败"))[:1200])
-        if service.error:
-            raise service.error
-        if collector.failures:
-            raise BridgeError("INCOMPLETE_DOCUMENT", "检测到翻译或排版失败，未导入不完整译文。可查看诊断并重试。")
-        if result is None or not result.mono_pdf_path:
-            raise BridgeError("NO_OUTPUT", "排版引擎未生成中文 PDF。")
-        return Path(result.mono_pdf_path)
 
-    try:
-        with contextlib.ExitStack() as stack:
-            stack.enter_context(patch.object(ILTranslator, "translate", translate_document))
-            stack.enter_context(patch.object(ILTranslator, "pre_translate_paragraph", preprocess))
-            stack.enter_context(patch.object(Typesetting, "_find_optimal_scale_and_layout", layout))
-            generated = asyncio.run(execute())
-        notify({"stage": "validating", "completed": 0, "total": 1})
-        report = validate_pdf(source, generated)
-        if generated.resolve() != Path(output).resolve():
-            shutil.copyfile(generated, output)
-        return report
-    finally:
-        logger.removeHandler(collector)
+async def translate_events(config, service, notify):
+    from babeldoc.format.pdf.high_level import async_translate
+    result = None
+    async for event in async_translate(config):
+        kind = event.get("type", "")
+        if kind.startswith("progress"):
+            stage = event.get("stage", "")
+            notify({"stage": "translating" if "translat" in stage.lower() else "typesetting" if "typeset" in stage.lower() or "pdf" in stage.lower() and "generat" in stage.lower() else "parsing",
+                    "detail": stage, "completed": event.get("stage_current", 0), "total": event.get("stage_total"), "percent": event.get("overall_progress", 0)})
+        elif kind == "finish":
+            result = event["translate_result"]
+            break  # Upstream terminal result; do not wait for another event.
+        elif kind == "error":
+            if service.error:
+                raise service.error
+            raise BridgeError("ENGINE_FAILED", "BabelDOC 返回处理失败，请查看任务详情。")
+    if service.error:
+        raise service.error
+    if result is None or not result.mono_pdf_path:
+        raise BridgeError("NO_OUTPUT", "BabelDOC 未返回中文 PDF。")
+    return Path(result.mono_pdf_path)
+
+
+def run_translation(source, output, work_dir, service, notify, offline_assets=""):
+    check_dependencies()
+    inspect_pdf(source)
+    configure_assets(service.store.root / "engine-assets")
+    notify({"stage": "assets", "completed": 0, "total": None})
+    if offline_assets:
+        from babeldoc.assets.assets import restore_offline_assets_package
+        restore_offline_assets_package(Path(offline_assets))
+    prepare_assets()
+    config = translation_config(source, output, work_dir, create_translator(service))
+    generated = asyncio.run(translate_events(config, service, notify))
+    notify({"stage": "validating", "completed": 0, "total": 1})
+    report = validate_pdf(source, generated)
+    if generated.resolve() != Path(output).resolve():
+        shutil.copyfile(generated, output)  # Byte-for-byte copy, never save/render/edit PDF.
+    return {**report, "engine": "BabelDOC", "engineVersion": BABELDOC_VERSION,
+            "layoutMode": "upstream-api", "simplifiedPages": [], "generatedByVersion": VERSION}

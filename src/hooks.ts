@@ -34,6 +34,7 @@ async function onStartup() {
   addon.api = {
     openTranslation: () => TranslationFactory.open(),
     openSettings: () => TranslationFactory.open(false),
+    openTasks: (jobId?: string) => TranslationFactory.openTasks(jobId),
   };
 
   // Example code - commented out for Split-View Reader plugin

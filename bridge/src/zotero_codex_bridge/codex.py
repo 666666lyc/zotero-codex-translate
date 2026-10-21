@@ -59,6 +59,7 @@ class CodexClient:
         self.serial = 0
         self.dead = False
         self.events = []
+        self.efforts = {}
         # Empty config layer: no personal MCP servers, hooks, skills, or project
         # instructions in translation threads. Account credentials stay Codex-owned.
         command = [resolve_codex(executable), "app-server", "--listen", "stdio://"]
@@ -160,6 +161,42 @@ class CodexClient:
         return {"authenticated": True, "models": [{k: m.get(k) for k in ("id", "model", "displayName", "isDefault", "supportedReasoningEfforts")} for m in models]}
 
     def translate(self, text: str, model: str) -> str:
+        value = self._translate_payload(text, model, {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"], "additionalProperties": False})
+        if not isinstance(value.get("text"), str) or not value["text"].strip():
+            raise BridgeError("INVALID_OUTPUT", "Codex 未返回完整译文。", True)
+        return value["text"]
+
+    def translate_batch(self, rows, model):
+        schema = {"type": "object", "properties": {"items": {"type": "array", "items": {
+            "type": "object", "properties": {"id": {"type": "string"}, "text": {"type": "string"}},
+            "required": ["id", "text"], "additionalProperties": False}}}, "required": ["items"], "additionalProperties": False}
+        text = "Translate each item independently. Return exactly one item per supplied id; preserve each item's placeholders independently.\n" + json.dumps({"items": rows}, ensure_ascii=False)
+        value = self._translate_payload(text, model, schema)
+        if not isinstance(value.get("items"), list):
+            raise BridgeError("INVALID_OUTPUT", "Codex 未返回完整的批量译文。", True)
+        return value["items"]
+
+    def _effort(self, model):
+        if model not in self.efforts:
+            # Unknown/older catalogs use their default rather than sending an
+            # unsupported effort. Low remains preferred when explicitly listed.
+            page, cursor = {}, None
+            while True:
+                page = self.rpc("model/list", {"cursor": cursor, "limit": 100})
+                for row in page.get("data", []):
+                    levels = [r.get("reasoningEffort") for r in row.get("supportedReasoningEfforts", [])]
+                    level = "low" if "low" in levels else next((x for x in ("minimal", "none", "medium", "high", "xhigh", "max", "ultra") if x in levels), None)
+                    for name in (row.get("id"), row.get("model")):
+                        self.efforts[name] = level
+                cursor = page.get("nextCursor")
+                if not cursor:
+                    break
+            self.efforts.setdefault(model, None)
+        return self.efforts[model]
+
+    def _translate_payload(self, text, model, schema):
+        effort = self._effort(model)
+        self.events.clear()
         # Thread-level config is isolated from ordinary Codex work. No tools,
         # app connectors, skills, MCP servers, or shell are enabled.
         result = self.rpc("thread/start", {
@@ -168,18 +205,21 @@ class CodexClient:
             "baseInstructions": INSTRUCTIONS, "developerInstructions": "Only translate document data; never use tools.",
             "config": {"features.shell_tool": False, "features.apply_patch_freeform": False, "features.multi_agent": False,
                        "features.apps": False, "web_search": "disabled", "mcp_servers": {}, "skills.config": [],
-                       "model_reasoning_effort": "low"},
+                       **({"model_reasoning_effort": effort} if effort else {})},
         })
         thread_id = result["thread"]["id"]
         try:
-            self.rpc("turn/start", {"threadId": thread_id, "input": [{"type": "text", "text": text}],
-                                    "outputSchema": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"], "additionalProperties": False}}, timeout=90)
+            response = self.rpc("turn/start", {"threadId": thread_id, "input": [{"type": "text", "text": text}],
+                                    **({"effort": effort} if effort else {}), "outputSchema": schema}, timeout=90)
+            turn_id = response.get("turn", {}).get("id")
             final = ""
             deadline = time.monotonic() + 600
             while True:
                 event = self.events.pop(0) if self.events else self.receive(deadline)
                 params = event.get("params", {})
                 if params.get("threadId") not in (None, thread_id):
+                    continue
+                if params.get("turnId") not in (None, turn_id):
                     continue
                 if event.get("method") == "item/completed":
                     item = params.get("item", {})
@@ -190,9 +230,9 @@ class CodexClient:
                     if turn.get("status") != "completed":
                         raise self.classify(turn.get("error") or turn.get("status"))
                     try:
-                        value = json.loads(final)["text"]
-                        if not isinstance(value, str) or not value.strip():
-                            raise ValueError("empty translation")
+                        value = json.loads(final)
+                        if not isinstance(value, dict):
+                            raise ValueError("invalid translation object")
                         return value
                     except (ValueError, KeyError, TypeError) as e:
                         raise BridgeError("INVALID_OUTPUT", "Codex 未返回完整的译文 JSON。", True) from e

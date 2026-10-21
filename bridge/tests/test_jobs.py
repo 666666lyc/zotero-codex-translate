@@ -91,3 +91,57 @@ class JobTests(unittest.TestCase):
         self.server.stop_worker()
         self.wait()
         self.assertEqual(self.server.store.get_job(job["id"])["state"], "interrupted")
+
+    def test_relayout_creates_new_job_without_touching_imported_result_or_login(self):
+        job = self.job()
+        job.update(state="imported", sourceItemKey="SOURCE", parentItemKey="PARENT", libraryID=1, outputItemKey="OUTPUT")
+        self.server.store.save_job(job)
+        with patch("zotero_codex_bridge.server.CodexClient", side_effect=AssertionError("must not require login")):
+            new = self.server.relayout({"jobId": job["id"], "sourcePath": str(self.server.store.job_dir(job["id"]) / "input.pdf")})
+        self.wait()
+        self.assertNotEqual(new["id"], job["id"])
+        self.assertTrue(new["cacheOnly"])
+        self.assertEqual(new["sourceJobId"], job["id"])
+        self.assertEqual(self.server.store.get_job(job["id"]), job)
+
+    def test_relayout_rejects_changed_live_attachment(self):
+        job = self.job()
+        self.server.store.save_job(job)
+        live = pathlib.Path(self.temp.name) / "changed.pdf"
+        live.write_bytes(b"changed")
+        with self.assertRaises(BridgeError) as error:
+            self.server.relayout({"jobId": job["id"], "sourcePath": str(live)})
+        self.assertEqual(error.exception.code, "INPUT_CHANGED")
+
+    def test_recover_generated_pdf_is_byte_identical_and_idempotent(self):
+        import pymupdf
+        job = self.job()
+        job.update(state="failed", sourceItemKey="SOURCE", parentItemKey="PARENT", libraryID=1,
+                   bridgeVersion="0.1.4", error={"code":"UNREADABLE_TEXT"})
+        self.server.store.save_job(job)
+        directory = self.server.store.job_dir(job["id"])
+        with pymupdf.open() as document:
+            document.new_page().insert_text((20,40), "Native small text", fontsize=5)
+            document.save(directory / "input.zh.mono.pdf")
+        # Original must also be openable for page-count metadata.
+        import shutil
+        shutil.copyfile(directory / "input.zh.mono.pdf", directory / "input.pdf")
+        job["fingerprint"] = fingerprint(directory / "input.pdf")
+        self.server.store.save_job(job)
+        params = {"jobId":job["id"],"sourcePath":str(directory / "input.pdf")}
+        with patch("zotero_codex_bridge.server.CodexClient", side_effect=AssertionError("no Codex")):
+            result = self.server.recover_output(params)
+            repeat = self.server.recover_output(params)
+        self.assertEqual(result["id"],repeat["id"])
+        self.assertEqual(pathlib.Path(result["result"]["outputPath"]).read_bytes(), (directory / "input.zh.mono.pdf").read_bytes())
+        self.assertEqual(result["metrics"]["requests"],0)
+        self.assertEqual(result["result"]["generatedByVersion"],"0.1.4")
+        self.assertEqual(self.server.store.get_job(job["id"]),job)
+
+    def test_recover_rejects_engine_failure_even_if_file_exists(self):
+        job = self.job()
+        job.update(state="failed",error={"code":"ENGINE_FAILED"})
+        self.server.store.save_job(job)
+        with self.assertRaises(BridgeError) as error:
+            self.server.recover_output({"jobId":job["id"]})
+        self.assertEqual(error.exception.code,"NOT_RECOVERABLE")

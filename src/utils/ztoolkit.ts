@@ -1,9 +1,13 @@
-import { ZoteroToolkit } from "zotero-plugin-toolkit";
+import { ZoteroToolkit, KeyboardManager } from "zotero-plugin-toolkit";
 import { config } from "../../package.json";
 
 export { createZToolkit };
 
 function createZToolkit() {
+  // This bundled toolkit belongs only to this addon. Its unused reader-keyboard
+  // poller outlives replaced readers and calls isDeadWrapper(undefined).
+  // Our split readers own and clean up their actual keyboard listeners.
+  (KeyboardManager.prototype as any).initReaderKeyboardListener = () => {};
   const _ztoolkit = new ZoteroToolkit();
   /**
    * Alternatively, import toolkit modules you use to minify the plugin size.

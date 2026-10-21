@@ -48,7 +48,7 @@ class Server:
             params = message.get("params", {})
             method = message.get("method")
             if method == "hello":
-                result = {"version": VERSION, "protocolVersion": PROTOCOL_VERSION, "babeldocVersion": BABELDOC_VERSION, "capabilities": ["resources.prepare", "resources.cancel"]}
+                result = {"version": VERSION, "protocolVersion": PROTOCOL_VERSION, "babeldocVersion": BABELDOC_VERSION, "capabilities": ["resources.prepare", "resources.cancel", "translation.batch", "jobs.metrics", "jobs.relayout", "jobs.recoverOutput", "layout.upstreamAPI"]}
             elif method == "resources.prepare":
                 self.ensure_idle()
                 if self.resource_thread and self.resource_thread.is_alive():
@@ -80,6 +80,10 @@ class Server:
                 result = self.store.get_job(params["jobId"])
             elif method == "jobs.start":
                 result = self.start(params)
+            elif method == "jobs.relayout":
+                result = self.relayout(params)
+            elif method == "jobs.recoverOutput":
+                result = self.recover_output(params)
             elif method == "jobs.resume":
                 job = self.store.get_job(params["jobId"])
                 if job["state"] in ("completed", "imported"):
@@ -163,14 +167,70 @@ class Server:
             # Keep any persisted job for diagnostics; only a copied input exists otherwise.
             raise
 
+    def relayout(self, params):
+        self.ensure_idle()
+        previous = self.store.get_job(params["jobId"])
+        source = Path(params["sourcePath"]).resolve(strict=True)
+        saved = self.store.job_dir(previous["id"]) / "input.pdf"
+        if fingerprint(source) != previous["fingerprint"] or fingerprint(saved) != previous["fingerprint"]:
+            raise BridgeError("INPUT_CHANGED", "原文已变化，不能使用原任务缓存重新排版。")
+        job_id = str(uuid.uuid4())
+        directory = self.store.job_dir(job_id)
+        directory.mkdir()
+        shutil.copyfile(saved, directory / "input.pdf")
+        job = {key: previous[key] for key in ("sourceItemKey", "parentItemKey", "libraryID", "model", "fingerprint")}
+        job.update(id=job_id, createdAt=time.time(), state="starting", sourceJobId=previous["id"], cacheOnly=True,
+                   codexPath="", offlineAssets="", storeRoot=str(self.store.root), progress={})
+        self.store.save_job(job)
+        return self.launch(job)
+
+    def recover_output(self, params):
+        self.ensure_idle()
+        previous = self.store.get_job(params["jobId"])
+        if previous.get("state") != "failed" or previous.get("error", {}).get("code") not in {
+                "UNREADABLE_TEXT", "TEXT_OVERLAP", "TEXT_CLIPPED", "PAGE_COUNT", "PAGE_SIZE", "MISSING_PARAGRAPH_TEXT", "MISSING_PAGE_TEXT"}:
+            raise BridgeError("NOT_RECOVERABLE", "此任务不是被旧版输出检查拦截的任务，请使用正常续跑。")
+        saved = self.store.job_dir(previous["id"]) / "input.pdf"
+        if fingerprint(Path(params["sourcePath"]).resolve(strict=True)) != previous["fingerprint"] or fingerprint(saved) != previous["fingerprint"]:
+            raise BridgeError("INPUT_CHANGED", "原文已变化，不能恢复原任务结果。")
+        from .pdf_engine import validate_pdf
+        candidates = sorted(saved.parent.glob("*.zh.mono.pdf"))
+        if len(candidates) != 1 or not candidates[0].resolve().is_relative_to(saved.parent.resolve()):
+            raise BridgeError("NO_OUTPUT", "原任务目录中未找到唯一的 BabelDOC 中文输出。")
+        generated = candidates[0]
+        report = validate_pdf(saved, generated)
+        digest = fingerprint(generated)
+        for existing in self.store.all_jobs():
+            if existing.get("sourceJobId") == previous["id"] and existing.get("recoveredOutputSha256") == digest:
+                result = Path(existing.get("result", {}).get("outputPath", ""))
+                if existing["state"] in ("completed", "imported") and result.is_file() and fingerprint(result) == digest:
+                    return existing
+        job_id = str(uuid.uuid4())
+        directory = self.store.job_dir(job_id)
+        directory.mkdir()
+        shutil.copyfile(saved, directory / "input.pdf")
+        output = directory / "translated.zh-CN.pdf"
+        shutil.copyfile(generated, output)
+        job = {key: previous[key] for key in ("sourceItemKey", "parentItemKey", "libraryID", "model", "fingerprint")}
+        job.update(id=job_id, createdAt=time.time(), finishedAt=time.time(), state="completed", sourceJobId=previous["id"],
+                   recoveredOutputSha256=digest, bridgeVersion=VERSION, storeRoot=str(self.store.root),
+                   metrics={"paragraphs":0,"cacheHits":0,"requests":0,"retries":0,"elapsedSeconds":0},
+                   result={**report,"outputPath":str(output),"engine":"BabelDOC","engineVersion":BABELDOC_VERSION,
+                           "layoutMode":"recovered-existing", "generatedByVersion": previous.get("bridgeVersion", "legacy"),
+                           "sourceJobId":previous["id"],"sourceOutputSha256":digest})
+        self.store.save_job(job)
+        return job
+
     def launch(self, job):
         self.ensure_idle()
         directory = self.store.job_dir(job["id"])
         if fingerprint(directory / "input.pdf") != job["fingerprint"]:
             raise BridgeError("INPUT_CHANGED", "缓存中的原文已发生变化，不能继续该任务。")
         spec = directory / "spec.json"
+        job["bridgeVersion"] = VERSION
         atomic_json(spec, job)
         job.update(state="running", error=None)
+        job["startedAt"] = time.time()
         self.store.save_job(job)
         self.cancelled = False
         self.active_job = job["id"]
@@ -192,6 +252,9 @@ class Server:
                 continue
             if event.get("event") == "progress":
                 job["progress"] = event
+                job["lastActivityAt"] = event.get("lastActivityAt", time.time())
+                if event.get("metrics"):
+                    job["metrics"] = event["metrics"]
                 if time.monotonic() - last_saved > 1:
                     self.store.save_job(job)
                     last_saved = time.monotonic()
@@ -210,10 +273,13 @@ class Server:
             expected = self.store.job_dir(job["id"]) / "translated.zh-CN.pdf"
             if Path(result["outputPath"]).resolve() == expected.resolve() and expected.is_file():
                 job.update(state="completed", result=result)
+                if result.get("metrics"):
+                    job["metrics"] = result["metrics"]
             else:
                 job.update(state="failed", error={"code": "INVALID_RESULT", "message": "结果路径无效。"})
         else:
             job.update(state="failed", error=error or {"code": "WORKER_CRASH", "message": "处理进程意外退出，可以续跑。", "retryable": True})
+        job["finishedAt"] = time.time()
         self.store.save_job(job)
         self.active_job = None
         self.send({"event": "job.changed", "jobId": job["id"], "job": job})

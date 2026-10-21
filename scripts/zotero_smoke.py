@@ -13,12 +13,15 @@ import socket
 import subprocess
 import time
 import uuid
+import zipfile
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--zotero", type=pathlib.Path, required=True)
 parser.add_argument("--bridge", type=pathlib.Path)
 parser.add_argument("--automatic", action="store_true")
 parser.add_argument("--reuse-root", type=pathlib.Path)
+parser.add_argument("--data-dir", type=pathlib.Path, help="Reuse only an isolated workspace tmp test library")
+parser.add_argument("--packed", action="store_true", help="Load the diagnostic test addon as a compressed XPI")
 parser.add_argument("--source-pdf", type=pathlib.Path, help="Use an existing synthetic source instead of generating the fixture")
 parser.add_argument("--translated-pdf", type=pathlib.Path, help="Import an actual bridge result instead of a copied source PDF")
 parser.add_argument("--timeout", type=int, default=600)
@@ -32,7 +35,8 @@ for old_report in (test_root / "report.json", test_root / "progress.json"):
     old_report.unlink(missing_ok=True)
 profile = test_root / ("profile-" + uuid.uuid4().hex[:8])
 profile.mkdir(parents=True, exist_ok=True)
-data = test_root / "data"
+data = args.data_dir.resolve() if args.data_dir else test_root / "data"
+data.resolve().relative_to((root / "tmp").resolve())
 extension = test_root / "addon"
 shutil.copytree(root / ".scaffold" / "build", extension, dirs_exist_ok=True)
 # Expose internals only in the disposable extension for failure diagnostics.
@@ -88,7 +92,10 @@ harness = r'''
       if (licenseWindow?.document.getElementById('license')?.textContent?.includes('GNU AFFERO GENERAL PUBLIC LICENSE')) break;
       await delay(100);
     }
-    if (!licenseWindow?.document.getElementById('notices')?.textContent?.includes('Split-View Reader')) throw new Error('License dialog did not load original notices');
+    if (!licenseWindow?.document.getElementById('notices')?.textContent?.includes('Split-View Reader')) {
+      report.licenseDebug = {url:licenseWindow?.location?.href, body:licenseWindow?.document.documentElement?.textContent?.slice(0,1200), windows:[...Services.wm.getEnumerator(null)].map(win=>win.location?.href)};
+      throw new Error('License dialog did not load original notices');
+    }
     licenseWindow.close();
     await record('licenses-and-corresponding-source-dialog');
     if (OPTS.automatic) {
@@ -174,6 +181,13 @@ needle = "await Zotero.ZoteroCodexTranslate.hooks.onStartup();"
 assert needle in code
 code = code.replace(needle, needle + '\n  Services.scriptloader.loadSubScript(rootURI + "content/smoke.js", {Zotero, Services, ChromeUtils, IOUtils, Components, addon: Zotero.ZoteroCodexTranslate});')
 bootstrap.write_text(code, encoding="utf-8")
+addon_path = extension
+if args.packed:
+    addon_path = test_root / "diagnostic.xpi"
+    with zipfile.ZipFile(addon_path, "w", zipfile.ZIP_DEFLATED) as archive:
+        for path in extension.rglob("*"):
+            if path.is_file():
+                archive.write(path, path.relative_to(extension).as_posix())
 prefs = {"extensions.autoDisableScopes": 0, "extensions.experiments.enabled": True, "extensions.zoteroWinWordIntegration.skipInstallation": True, "extensions.zoteroMacWordIntegration.skipInstallation": True, "extensions.zoteroOpenOfficeIntegration.skipInstallation": True, "layers.acceleration.disabled": True, "gfx.webrender.force-disabled": True, "extensions.enabledScopes": 15, "extensions.zotero.dataDir": str(data), "extensions.zotero.useDataDir": True,
          "extensions.zotero.firstRun": False, "extensions.zotero.firstRun2": False, "extensions.zotero.sync.autoSync": False,
          "extensions.zotero.automaticScraperUpdates": False, "app.update.auto": False, "extensions.update.enabled": False}
@@ -235,7 +249,7 @@ with (test_root / "zotero.log").open("w", encoding="utf-8") as log:
     env["MOZ_HEADLESS"] = "1"
     process = subprocess.Popen([str(args.zotero), "-no-remote", "-profile", str(profile), "--purgecaches", "--start-debugger-server", str(debug_port), "-ZoteroDebugText"], stdout=log, stderr=log, startupinfo=startup, env=env)
     try:
-        install_temporary_addon(debug_port, extension, process)
+        install_temporary_addon(debug_port, addon_path, process)
         deadline = time.monotonic() + args.timeout
         report_path = test_root / "report.json"
         while time.monotonic() < deadline and not report_path.exists() and process.poll() is None:

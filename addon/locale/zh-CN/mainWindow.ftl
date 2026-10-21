@@ -14,3 +14,5 @@ translate-menu =
     .label = 使用 Codex 翻译全文
 translate-settings =
     .label = Codex 文献翻译：连接设置
+translate-tasks =
+    .label = Codex 翻译任务

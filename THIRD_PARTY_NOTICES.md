@@ -10,7 +10,7 @@ New project code: AGPL-3.0-only; the complete license is in LICENSE. Third-party
 
 ## PDF engine and downloaded dependencies
 
-**BabelDOC 0.6.4**, awwaawwa and contributors, AGPL version 3. https://github.com/funstory-ai/BabelDOC/tree/v0.6.4 . The bridge uses its internal APIs through one adapter module; the upstream wheel is unmodified.
+**BabelDOC 0.6.4**, awwaawwa and contributors, AGPL version 3. https://github.com/funstory-ai/BabelDOC/tree/v0.6.4 . The bridge uses the public TranslationConfig / async_translate API and a BaseTranslator extension; it does not replace internal translation or layout methods. The upstream wheel is unmodified.
 
 Verified upstream source sdist SHA256: `dbd2a69ccaf6678c34089f8c422a38a0fa170f5fa88ee1313b4235103421a875`. Matching source is preserved in `third_party/babeldoc-0.6.4-source.zip` (ZIP repack, separate digest alongside), including its nested third-party notices. No claim that BabelDOC grants “or later” is made without an explicit grant.
 
